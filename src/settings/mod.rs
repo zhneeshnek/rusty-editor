@@ -45,7 +45,7 @@ struct SwitchEntry {
 }
 
 pub struct SettingsWindow {
-    window: Handle<UiNode>,
+    pub window: Handle<UiNode>,
     ok: Handle<UiNode>,
     default: Handle<UiNode>,
     sender: Sender<Message>,

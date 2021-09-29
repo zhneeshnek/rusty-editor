@@ -21,9 +21,9 @@ use rg3d::{
         menu::{MenuBuilder, MenuItemBuilder, MenuItemContent},
         message::{
             FileSelectorMessage, MenuItemMessage, MessageBoxMessage, MessageDirection,
-            UiMessageData, WidgetMessage, WindowMessage,
+            UiMessageData, WidgetMessage, WindowMessage, KeyCode,
         },
-        messagebox::{MessageBoxBuilder, MessageBoxButtons},
+        messagebox::{MessageBoxBuilder, MessageBoxButtons, MessageBoxResult},
         widget::WidgetBuilder,
         window::{WindowBuilder, WindowTitle},
         Thickness,
@@ -95,6 +95,8 @@ pub struct Menu {
     create: Handle<UiNode>,
     edit: Handle<UiNode>,
     open_path_fixer: Handle<UiNode>,
+    new_scene_message_box: Handle<UiNode>,
+    close_scene_message_box: Handle<UiNode>,
 }
 
 pub struct MenuContext<'a, 'b> {
@@ -478,6 +480,28 @@ impl Menu {
         .with_filter(make_scene_file_filter())
         .build(ctx);
 
+        let new_scene_message_box = MessageBoxBuilder::new(
+            WindowBuilder::new(WidgetBuilder::new().with_width(300.0).with_height(100.0).with_desired_position(Vector2::new(-100.0, 100.0)))
+                .can_close(false)
+                .can_minimize(false)
+                .open(false)
+                .with_title(WindowTitle::Text("Unsaved changes".to_owned())),
+            )
+            .with_text("There are unsaved changes. Do you wish to save them before starting new scene?")
+            .with_buttons(MessageBoxButtons::YesNoCancel)
+            .build(ctx);
+
+        let close_scene_message_box = MessageBoxBuilder::new(
+            WindowBuilder::new(WidgetBuilder::new().with_width(300.0).with_height(100.0).with_desired_position(Vector2::new(100.0, -100.0)))
+                .can_close(false)
+                .can_minimize(false)
+                .open(false)
+                .with_title(WindowTitle::Text("Unsaved changes".to_owned())),
+            )
+            .with_text("There are unsaved changes. Do you wish to save them before closing scene?")
+            .with_buttons(MessageBoxButtons::YesNoCancel)
+            .build(ctx);
+
         Self {
             menu,
             new_scene,
@@ -521,6 +545,8 @@ impl Menu {
             edit,
             open_path_fixer,
             create_decal,
+            new_scene_message_box,
+            close_scene_message_box
         }
     }
 
@@ -563,6 +589,20 @@ impl Menu {
             self.settings
                 .handle_message(message, scene, ctx.engine, ctx.settings);
         }
+
+        let mut skip_shortcuts: bool = false;
+        if ctx.engine.user_interface
+            .node(self.new_scene_message_box).visibility() { skip_shortcuts = true;}
+        else if ctx.engine.user_interface
+            .node(self.close_scene_message_box).visibility() { skip_shortcuts = true;}
+        else if ctx.engine.user_interface
+            .node(self.save_file_selector).visibility() { skip_shortcuts = true;}
+        else if ctx.engine.user_interface
+            .node(self.load_file_selector).visibility() { skip_shortcuts = true;}
+        else if ctx.engine.user_interface
+            .node(self.configure_message).visibility() { skip_shortcuts = true;}
+        else if ctx.engine.user_interface
+            .node(self.settings.window).visibility() { skip_shortcuts = true;}
 
         match message.data() {
             UiMessageData::FileSelector(FileSelectorMessage::Commit(path)) => {
@@ -850,6 +890,153 @@ impl Menu {
                                 None,
                             ));
                     }
+                }
+            }
+            UiMessageData::Widget(WidgetMessage::KeyDown(key)) => {
+                if !skip_shortcuts {
+                    match *key {
+                        KeyCode::L => {
+                            if ctx.engine.user_interface.keyboard_modifiers().control {
+                                self
+                                    .open_load_file_selector(&mut ctx.engine.user_interface);
+                            }
+                        }
+                        KeyCode::N => {
+                            if ctx.engine.user_interface.keyboard_modifiers().control {
+                                if let Some(editor_scene) = ctx.editor_scene {
+                                    ctx.engine
+                                            .user_interface
+                                            .send_message(WindowMessage::open_modal(
+                                                self.new_scene_message_box, // create new window object to open.
+                                                MessageDirection::ToWidget,
+                                                true,
+                                    ));
+                                } else {
+                                    self.message_sender
+                                        .send(Message::NewScene).unwrap();
+                                }
+                            }
+                        }
+                        KeyCode::Q => {
+                            if ctx.engine.user_interface.keyboard_modifiers().control {
+                                if let Some(editor_scene) = ctx.editor_scene {
+                                    ctx.engine
+                                            .user_interface
+                                            .send_message(WindowMessage::open_modal(
+                                                self.close_scene_message_box, // create new window object to open.
+                                                MessageDirection::ToWidget,
+                                                true,
+                                    ));
+                                } else {
+                                    self.message_sender
+                                        .send(Message::CloseScene).unwrap();
+                                }
+                            }
+                        }
+                        KeyCode::S => {
+                            if ctx.engine.user_interface.keyboard_modifiers().control &&  ctx.engine.user_interface.keyboard_modifiers().shift {
+                                // ...
+                                ctx.engine
+                                    .user_interface
+                                    .send_message(WindowMessage::open_modal(
+                                        self.save_file_selector,
+                                        MessageDirection::ToWidget,
+                                        true,
+                                    ));
+                            } else if ctx.engine.user_interface.keyboard_modifiers().control {
+                                if let Some(scene_path) =
+                                    ctx.editor_scene.as_ref().map(|s| s.path.as_ref()).flatten()
+                                    {
+                                        self.message_sender
+                                            .send(Message::SaveScene(scene_path.clone()))
+                                            .unwrap();
+                                    } else {
+                                        // If scene wasn't saved yet - open Save As window.
+                                        ctx.engine
+                                            .user_interface
+                                            .send_message(WindowMessage::open_modal(
+                                                self.save_file_selector,
+                                                MessageDirection::ToWidget,
+                                                true,
+                                            ));
+                                        ctx.engine
+                                            .user_interface
+                                            .send_message(FileSelectorMessage::path(
+                                                self.save_file_selector,
+                                                MessageDirection::ToWidget,
+                                                std::env::current_dir().unwrap(),
+                                            ));
+                                    }
+                            }
+                        }
+                        _ => (),
+                    }
+                }
+            }
+            UiMessageData::MessageBox(MessageBoxMessage::Close(result))
+                if message.destination() == self.new_scene_message_box =>
+            {
+                match result {
+                    MessageBoxResult::No => {
+                        self.message_sender
+                            .send(Message::NewScene)
+                            .unwrap();
+                    }
+                    MessageBoxResult::Yes => {
+                        if let Some(scene) = ctx.editor_scene.as_ref() {
+                            if let Some(path) = ctx.editor_scene.unwrap().path.as_ref() {
+                                self.message_sender
+                                    .send(Message::SaveScene(path.clone()))
+                                    .unwrap();
+                                self.message_sender
+                                    .send(Message::NewScene)
+                                    .unwrap();
+                            } else {
+                                // Scene wasn't saved yet, open Save As dialog.
+                                ctx.engine
+                                    .user_interface
+                                    .send_message(WindowMessage::open_modal(
+                                        self.save_file_selector,
+                                        MessageDirection::ToWidget,
+                                        true,
+                                    ));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            UiMessageData::MessageBox(MessageBoxMessage::Close(result))
+                if message.destination() == self.close_scene_message_box =>
+            {
+                match result {
+                    MessageBoxResult::No => {
+                        self.message_sender
+                            .send(Message::CloseScene)
+                            .unwrap();
+                    }
+                    MessageBoxResult::Yes => {
+                        if let Some(scene) = ctx.editor_scene.as_ref() {
+                            if let Some(path) = ctx.editor_scene.unwrap().path.as_ref() {
+                                self.message_sender
+                                    .send(Message::SaveScene(path.clone()))
+                                    .unwrap();
+                                self.message_sender
+                                    .send(Message::CloseScene)
+                                    .unwrap();
+                            } else {
+                                // Scene wasn't saved yet, open Save As dialog.
+                                ctx.engine
+                                    .user_interface
+                                    .send_message(WindowMessage::open_modal(
+                                        self.save_file_selector,
+                                        MessageDirection::ToWidget,
+                                        true,
+                                    ));
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
             _ => (),

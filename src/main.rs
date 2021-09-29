@@ -1388,12 +1388,6 @@ impl Editor {
                                 ),
                                 KeyCode::Key4 => self
                                     .set_interaction_mode(Some(InteractionModeKind::Scale), engine),
-                                KeyCode::L
-                                    if engine.user_interface.keyboard_modifiers().control =>
-                                {
-                                    self.menu
-                                        .open_load_file_selector(&mut engine.user_interface);
-                                }
                                 KeyCode::C
                                     if engine.user_interface.keyboard_modifiers().control =>
                                 {
