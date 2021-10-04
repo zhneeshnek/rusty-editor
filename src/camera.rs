@@ -7,7 +7,10 @@ use rg3d::{
         math::aabb::AxisAlignedBoundingBox,
         pool::Handle,
     },
-    gui::message::{KeyCode, MouseButton},
+    gui::{
+        message::{KeyCode, MouseButton, KeyboardModifiers},
+        UserInterface,
+    },
     scene::{
         base::BaseBuilder, camera::CameraBuilder, graph::Graph, node::Node,
         transform::TransformBuilder,
@@ -37,6 +40,7 @@ pub struct CameraController {
     stack: Vec<Handle<Node>>,
     editor_context: PickContext,
     scene_context: PickContext,
+    frozen: bool,
 }
 
 #[derive(Clone)]
@@ -93,6 +97,7 @@ impl CameraController {
             stack: Default::default(),
             editor_context: Default::default(),
             scene_context: Default::default(),
+            frozen: false,
         }
     }
 
@@ -150,18 +155,20 @@ impl CameraController {
 
     pub fn on_key_up(&mut self, key: KeyCode) {
         match key {
-            KeyCode::W => self.move_forward = false,
-            KeyCode::S => self.move_backward = false,
-            KeyCode::A => self.move_left = false,
-            KeyCode::D => self.move_right = false,
-            KeyCode::Space | KeyCode::Q => self.move_up = false,
-            KeyCode::E => self.move_down = false,
-            KeyCode::LControl | KeyCode::LShift => self.speed_factor = 1.0,
+            KeyCode::W => if self.move_forward { self.move_forward = false; },
+            KeyCode::S => if self.move_backward { self.move_backward = false; },
+            KeyCode::A => if self.move_left { self.move_left = false; },
+            KeyCode::D => if self.move_right { self.move_right = false; },
+            KeyCode::Space | KeyCode::Q => if self.move_up { self.move_up = false; },
+            KeyCode::E => if self.move_down { self.move_down = false; },
+                // LShift, LAlt for camera control. that way Ctrl reserved for other functions?
+            KeyCode::LControl => (),
+            KeyCode::LShift | KeyCode::LAlt => self.speed_factor = 1.0,
             _ => (),
         }
     }
 
-    pub fn on_key_down(&mut self, key: KeyCode) {
+    pub fn on_key_down(&mut self, key: KeyCode, modifiers: &KeyboardModifiers) {
         match key {
             KeyCode::W => self.move_forward = true,
             KeyCode::S => self.move_backward = true,
@@ -169,13 +176,57 @@ impl CameraController {
             KeyCode::D => self.move_right = true,
             KeyCode::Space | KeyCode::Q => self.move_up = true,
             KeyCode::E => self.move_down = true,
-            KeyCode::LControl => self.speed_factor = 2.0,
-            KeyCode::LShift => self.speed_factor = 0.25,
+            KeyCode::LControl => (),
+            KeyCode::LShift => self.speed_factor = 2.0,
+            KeyCode::LAlt => self.speed_factor = 0.25,
             _ => (),
         }
     }
 
+    // unblock the camera.
+    pub fn unfreeze(&mut self) {
+        self.frozen = false;
+    }
+
+    // reset all inputs and block interaction with camera.
+    pub fn freeze(&mut self) {
+        self.stop();
+        self.frozen = true;
+    }
+
+    // Purpose: reset all current camera inputs. for instance when opening menus with shortcuts.
+    fn stop(&mut self) {
+        if self.move_forward {
+            self.move_forward = false;
+        }
+        if self.move_backward {
+            self.move_backward = false;
+        }
+        if self.move_left {
+            self.move_left = false;
+        }
+        if self.move_right {
+            self.move_right = false;
+        }
+        if self.move_up {
+            self.move_up = false;
+        }
+        if self.move_down {
+            self.move_down = false;
+        }
+        if self.rotate {
+            self.rotate = false;
+        }
+        if self.drag {
+            self.drag = false;
+        }
+    }
+
     pub fn update(&mut self, graph: &mut Graph, dt: f32) {
+        if self.frozen {
+            return;
+        }
+
         let camera = &mut graph[self.camera];
 
         let global_transform = camera.global_transform();

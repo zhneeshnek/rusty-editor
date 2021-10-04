@@ -1,15 +1,18 @@
 use crate::{
-    create_terrain_layer_material, make_save_file_selector, make_scene_file_filter,
+    create_terrain_layer_material, make_scene_file_filter,
     scene::{
         commands::{graph::AddNodeCommand, sound::AddSoundSourceCommand, PasteCommand},
-        EditorScene, Selection,
+        EditorScene, Selection, SaveFileSelectorFlag,
     },
     send_sync_message,
     settings::{Settings, SettingsWindow},
     GameEngine, Message,
+    utils::path_fixer::PathFixer,
+    configurator::Configurator,
+    interaction::{InteractionMode, InteractionModeTrait},
 };
 use rg3d::gui::message::UiMessage;
-use rg3d::gui::{UiNode, UserInterface};
+use rg3d::gui::{UiNode, UserInterface, BuildContext};
 use rg3d::{
     core::{
         algebra::{Matrix4, Vector2},
@@ -17,7 +20,7 @@ use rg3d::{
         scope_profile,
     },
     gui::{
-        file_browser::FileSelectorBuilder,
+        file_browser::{FileSelectorBuilder, FileBrowserMode},
         menu::{MenuBuilder, MenuItemBuilder, MenuItemContent},
         message::{
             FileSelectorMessage, MenuItemMessage, MessageBoxMessage, MessageDirection,
@@ -50,7 +53,10 @@ use rg3d::{
     },
     sound::source::{generic::GenericSourceBuilder, spatial::SpatialSourceBuilder},
 };
-use std::sync::{mpsc::Sender, Arc, RwLock};
+use std::{
+    sync::{mpsc::Sender, Arc, RwLock},
+    path::PathBuf,
+};
 
 pub struct Menu {
     pub menu: Handle<UiNode>,
@@ -90,13 +96,17 @@ pub struct Menu {
     configure: Handle<UiNode>,
     light_panel: Handle<UiNode>,
     pub settings: SettingsWindow,
+    // menu-related widgets/objects moved from Editor to Menu class.
+    pub configurator: Configurator,
+    pub path_fixer: PathFixer,
+    pub restriction: MenuShortcutRestriction,
     configure_message: Handle<UiNode>,
     log_panel: Handle<UiNode>,
     create: Handle<UiNode>,
     edit: Handle<UiNode>,
     open_path_fixer: Handle<UiNode>,
-    new_scene_message_box: Handle<UiNode>,
-    close_scene_message_box: Handle<UiNode>,
+    // message box container
+    pub message_boxes: MessageBoxes,
 }
 
 pub struct MenuContext<'a, 'b> {
@@ -105,11 +115,25 @@ pub struct MenuContext<'a, 'b> {
     pub sidebar_window: Handle<UiNode>,
     pub world_outliner_window: Handle<UiNode>,
     pub asset_window: Handle<UiNode>,
-    pub configurator_window: Handle<UiNode>,
     pub light_panel: Handle<UiNode>,
     pub log_panel: Handle<UiNode>,
     pub settings: &'b mut Settings,
-    pub path_fixer: Handle<UiNode>,
+    pub current_interaction_mode: Option<&'b mut InteractionMode>,
+}
+
+// Purpose: restricts editor interaction when menu shortcut is used.
+pub struct MenuShortcutRestriction {
+    pub active: bool,
+    // menu nodes that trigger a shortcut restriction.
+    triggers: std::collections::HashSet<Handle<UiNode>>, 
+}
+
+pub struct MessageBoxes {
+    new_scene: Handle<UiNode>,
+    close_scene: Handle<UiNode>,
+    load_scene: Handle<UiNode>,
+    pub exit: Handle<UiNode>,
+    pub validation: Handle<UiNode>,
 }
 
 fn switch_window_state(window: Handle<UiNode>, ui: &mut UserInterface, center: bool) {
@@ -119,6 +143,102 @@ fn switch_window_state(window: Handle<UiNode>, ui: &mut UserInterface, center: b
     } else {
         WindowMessage::open(window, MessageDirection::ToWidget, center)
     })
+}
+
+fn make_save_file_selector(ctx: &mut BuildContext) -> Handle<UiNode> {
+    FileSelectorBuilder::new(
+        WindowBuilder::new(WidgetBuilder::new().with_width(300.0).with_height(400.0))
+            .with_title(WindowTitle::Text("Save Scene As".into()))
+            .open(false),
+    )
+    .with_mode(FileBrowserMode::Save {
+        default_file_name: PathBuf::from("unnamed.rgs"),
+    })
+    .with_path("./")
+    .with_filter(make_scene_file_filter())
+    .build(ctx)
+}
+
+fn make_load_file_selector(ctx: &mut BuildContext) -> Handle<UiNode> {
+    FileSelectorBuilder::new(
+        WindowBuilder::new(WidgetBuilder::new().with_width(300.0).with_height(400.0))
+            .open(false)
+            .with_title(WindowTitle::Text("Select a Scene To Load".into())),
+    )
+    .with_mode(FileBrowserMode::Open)
+    .with_filter(make_scene_file_filter())
+    .build(ctx)
+}
+
+    
+fn make_message_boxes(ctx: &mut BuildContext) -> MessageBoxes {
+    let new_scene = MessageBoxBuilder::new(
+        WindowBuilder::new(
+            WidgetBuilder::new().with_width(300.0).with_height(100.0).with_desired_position(Vector2::new(-100.0, 100.0)))
+                .can_close(false)
+                .can_minimize(false)
+                .open(false)   
+                .with_title(WindowTitle::Text("Unsaved changes".to_owned()))
+        )
+        .with_text("There are unsaved changes. Do you wish to save them before starting new scene?")
+        .with_buttons(MessageBoxButtons::YesNoCancel)
+        .build(ctx);
+
+    let load_scene = MessageBoxBuilder::new(
+        WindowBuilder::new(
+            WidgetBuilder::new().with_width(300.0).with_height(100.0).with_desired_position(Vector2::new(-100.0, 100.0)))
+            .can_close(false)
+            .can_minimize(false)
+            .open(false)
+            .with_title(WindowTitle::Text("Unsaved changes".to_owned()))
+        )
+        .with_text("There are unsaved changes. Do you wish to save them before loading scene?")
+        .with_buttons(MessageBoxButtons::YesNoCancel)
+        .build(ctx);
+
+    let close_scene = MessageBoxBuilder::new(
+        WindowBuilder::new(
+            WidgetBuilder::new().with_width(300.0).with_height(100.0).with_desired_position(Vector2::new(-100.0, 100.0))
+        )
+            .can_close(false)
+            .can_minimize(false)
+            .open(false)
+            .with_title(WindowTitle::Text("Unsaved changes".to_owned()))
+        )
+        .with_text("There are unsaved changes. Do you wish to save them before closing scene?")
+        .with_buttons(MessageBoxButtons::YesNoCancel)
+        .build(ctx);
+
+    let exit = MessageBoxBuilder::new(
+        WindowBuilder::new(
+            WidgetBuilder::new().with_width(300.0).with_height(100.0))
+                .can_close(false)
+                .can_minimize(false)
+                .open(false)
+                .with_title(WindowTitle::Text("Unsaved changes".to_owned())),
+        )
+        .with_text("There are unsaved changes. Do you wish to save them before exit?")
+        .with_buttons(MessageBoxButtons::YesNoCancel)
+        .build(ctx);
+
+    let validation = MessageBoxBuilder::new(
+        WindowBuilder::new(
+            WidgetBuilder::new().with_width(400.0).with_height(500.0))
+                .can_close(false)
+                .can_minimize(false)
+                .open(false)
+                .with_title(WindowTitle::Text("Validation failed!".to_owned())),
+        )
+        .with_buttons(MessageBoxButtons::Ok)
+        .build(ctx);
+
+    MessageBoxes {
+        new_scene,
+        close_scene,
+        load_scene,
+        exit,
+        validation
+    }
 }
 
 impl Menu {
@@ -162,6 +282,7 @@ impl Menu {
         let create_sound_source;
         let create_spatial_sound_source;
         let open_path_fixer;
+        let message_boxes;
         let ctx = &mut engine.user_interface.build_ctx();
         let configure_message = MessageBoxBuilder::new(
             WindowBuilder::new(WidgetBuilder::new().with_width(250.0).with_height(150.0))
@@ -472,35 +593,38 @@ impl Menu {
 
         let save_file_selector = make_save_file_selector(ctx);
 
-        let load_file_selector = FileSelectorBuilder::new(
-            WindowBuilder::new(WidgetBuilder::new().with_width(300.0).with_height(400.0))
-                .open(false)
-                .with_title(WindowTitle::Text("Select a Scene To Load".into())),
-        )
-        .with_filter(make_scene_file_filter())
-        .build(ctx);
+        let load_file_selector = make_load_file_selector(ctx);
 
-        let new_scene_message_box = MessageBoxBuilder::new(
-            WindowBuilder::new(WidgetBuilder::new().with_width(300.0).with_height(100.0).with_desired_position(Vector2::new(-100.0, 100.0)))
-                .can_close(false)
-                .can_minimize(false)
-                .open(false)
-                .with_title(WindowTitle::Text("Unsaved changes".to_owned())),
-            )
-            .with_text("There are unsaved changes. Do you wish to save them before starting new scene?")
-            .with_buttons(MessageBoxButtons::YesNoCancel)
-            .build(ctx);
+        message_boxes = make_message_boxes(ctx); 
 
-        let close_scene_message_box = MessageBoxBuilder::new(
-            WindowBuilder::new(WidgetBuilder::new().with_width(300.0).with_height(100.0).with_desired_position(Vector2::new(100.0, -100.0)))
-                .can_close(false)
-                .can_minimize(false)
-                .open(false)
-                .with_title(WindowTitle::Text("Unsaved changes".to_owned())),
-            )
-            .with_text("There are unsaved changes. Do you wish to save them before closing scene?")
-            .with_buttons(MessageBoxButtons::YesNoCancel)
-            .build(ctx);
+        let path_fixer = PathFixer::new(ctx);
+
+        let settings_window = SettingsWindow::new(engine, message_sender.clone(), settings);
+
+        let configurator = Configurator::new(
+            message_sender.clone(),
+            &mut engine.user_interface.build_ctx(),
+        );
+        engine
+            .user_interface
+            .send_message(WindowMessage::open_modal(
+                configurator.window,
+                MessageDirection::ToWidget,
+                true,
+            ));
+
+        let mut restriction = MenuShortcutRestriction{active: false, triggers: std::collections::HashSet::new()};
+
+        restriction.triggers.insert(message_boxes.new_scene);
+        restriction.triggers.insert(message_boxes.close_scene);
+        restriction.triggers.insert(message_boxes.load_scene);
+        restriction.triggers.insert(message_boxes.exit);
+        restriction.triggers.insert(message_boxes.validation);
+        restriction.triggers.insert(load_file_selector);
+        restriction.triggers.insert(save_file_selector);
+        restriction.triggers.insert(path_fixer.window);
+        restriction.triggers.insert(configurator.window);
+        restriction.triggers.insert(settings_window.window);
 
         Self {
             menu,
@@ -520,7 +644,8 @@ impl Menu {
             create_spot_light,
             create_directional_light,
             exit,
-            settings: SettingsWindow::new(engine, message_sender.clone(), settings),
+            settings: settings_window,
+            restriction: restriction, 
             message_sender,
             save_file_selector,
             load_file_selector,
@@ -544,10 +669,24 @@ impl Menu {
             create,
             edit,
             open_path_fixer,
+            path_fixer,
+            configurator,
             create_decal,
-            new_scene_message_box,
-            close_scene_message_box
+            message_boxes,
         }
+    }
+
+    pub fn open_save_file_selector(&self, ui: &mut UserInterface) {
+        ui.send_message(WindowMessage::open_modal(
+            self.save_file_selector,
+            MessageDirection::ToWidget,
+            true,
+        ));
+        ui.send_message(FileSelectorMessage::path(
+            self.save_file_selector,
+            MessageDirection::ToWidget,
+            std::env::current_dir().unwrap(),
+        ));
     }
 
     pub fn open_load_file_selector(&self, ui: &mut UserInterface) {
@@ -556,10 +695,10 @@ impl Menu {
             MessageDirection::ToWidget,
             true,
         ));
-        ui.send_message(FileSelectorMessage::root(
+        ui.send_message(FileSelectorMessage::path(
             self.load_file_selector,
             MessageDirection::ToWidget,
-            Some(std::env::current_dir().unwrap()),
+            std::env::current_dir().unwrap(),
         ));
     }
 
@@ -582,38 +721,145 @@ impl Menu {
         }
     }
 
+    fn open_new_scene_message_box(&mut self, ui: &mut UserInterface) {
+        ui
+            .send_message(WindowMessage::open_modal(
+                self.message_boxes.new_scene, // create new window object to open.
+                MessageDirection::ToWidget,
+                true,
+        ));
+    }
+
+    fn open_close_scene_message_box(&mut self, ui: &mut UserInterface) {
+        ui
+            .send_message(WindowMessage::open_modal(
+                self.message_boxes.close_scene, // create new window object to open.
+                MessageDirection::ToWidget,
+                true,
+        ));
+    }
+
     pub fn handle_ui_message(&mut self, message: &UiMessage, ctx: MenuContext) {
         scope_profile!();
 
+        // editor scene param is option, so settings are still handled, when no scene is active.
         if let Some(scene) = ctx.editor_scene.as_ref() {
             self.settings
-                .handle_message(message, scene, ctx.engine, ctx.settings);
+                .handle_message(message, Some(scene), ctx.engine, ctx.settings);
+        } else {
+            self.settings
+                .handle_message(message, None, ctx.engine, ctx.settings);
         }
 
-        let mut skip_shortcuts: bool = false;
-        if ctx.engine.user_interface
-            .node(self.new_scene_message_box).visibility() { skip_shortcuts = true;}
-        else if ctx.engine.user_interface
-            .node(self.close_scene_message_box).visibility() { skip_shortcuts = true;}
-        else if ctx.engine.user_interface
-            .node(self.save_file_selector).visibility() { skip_shortcuts = true;}
-        else if ctx.engine.user_interface
-            .node(self.load_file_selector).visibility() { skip_shortcuts = true;}
-        else if ctx.engine.user_interface
-            .node(self.configure_message).visibility() { skip_shortcuts = true;}
-        else if ctx.engine.user_interface
-            .node(self.settings.window).visibility() { skip_shortcuts = true;}
+        self.configurator.handle_ui_message(message, ctx.engine);
+
+        self.path_fixer
+            .handle_ui_message(message, &mut ctx.engine.user_interface);
 
         match message.data() {
+            UiMessageData::Window(WindowMessage::OpenModal {center} ) => {
+                if self.restriction.triggers.contains(&message.destination()) {
+                    self.restriction.active = true;
+                    if let Some(scene) = ctx.editor_scene {
+                        scene.camera_controller.freeze();
+                        if let Some(mode) = ctx.current_interaction_mode {
+//                          TODO: stop interaction mode
+                        }
+                    }
+                }
+            }
+            UiMessageData::Window(WindowMessage::Open {center} ) => {
+                if self.restriction.triggers.contains(&message.destination()) {
+                    self.restriction.active = true;
+                    if let Some(scene) = ctx.editor_scene {
+                        scene.camera_controller.freeze();
+                        if let Some(mode) = ctx.current_interaction_mode {
+//                          TODO: stop interaction mode
+                        }
+                    }
+                }
+            }
+            UiMessageData::Window(WindowMessage::Close) => {
+                if self.restriction.triggers.contains(&message.destination()) {
+                    self.restriction.active = false;
+                    if let Some(scene) = ctx.editor_scene {
+                        scene.camera_controller.unfreeze();
+                        if let Some(mode) = ctx.current_interaction_mode {
+//                          TODO: resume interaction mode
+                        }
+                    }
+                }
+            }
             UiMessageData::FileSelector(FileSelectorMessage::Commit(path)) => {
                 if message.destination() == self.save_file_selector {
-                    self.message_sender
-                        .send(Message::SaveScene(path.to_owned()))
-                        .unwrap();
+                    if let Some(editor_scene) = ctx.editor_scene.as_ref() {
+                        if let Some(flag) = editor_scene.selector_flag.as_ref() {
+                            match flag {
+                                SaveFileSelectorFlag::NewScene => {
+                                    self.message_sender
+                                        .send(Message::SaveScene(path.to_owned()))
+                                        . unwrap();
+                                    self.message_sender
+                                        .send(Message::NewScene)
+                                        .unwrap();
+                                }
+                                SaveFileSelectorFlag::ClosingScene => {
+                                    self.message_sender
+                                        .send(Message::SaveScene(path.to_owned()))
+                                        . unwrap();
+                                    self.message_sender
+                                        .send(Message::CloseScene)
+                                        .unwrap();
+                                }
+                                SaveFileSelectorFlag::LoadingScene => {
+                                    self.message_sender
+                                        .send(Message::SaveScene(path.to_owned()))
+                                        .unwrap();
+                                    self.message_sender
+                                        .send(Message::LoadScene(editor_scene.next_path.as_ref().unwrap().clone()))
+                                        .unwrap();
+                                }
+                                SaveFileSelectorFlag::Exiting => {
+                                    self.message_sender
+                                        .send(Message::SaveScene(path.clone()))
+                                        .unwrap();
+                                    self.message_sender
+                                        .send(Message::Exit { force: true })
+                                        .unwrap();
+                                }
+                            }
+                        } else {
+                            // just save scene
+                            self.message_sender
+                            .send(Message::SaveScene(path.to_owned()))
+                            .unwrap();
+                        }
+                         // just save
+                    } else {
+                        self.message_sender
+                            .send(Message::SaveScene(path.to_owned()))
+                            .unwrap();
+                    }
                 } else if message.destination() == self.load_file_selector {
-                    self.message_sender
+                    // active scene
+                    if let Some(editor_scene) = ctx.editor_scene {
+                        // scene active and save path determined.
+                        // store load_path in editor scene based buffer.
+                        editor_scene.next_path = Some(path.to_owned());          
+
+                        ctx.engine
+                            .user_interface
+                            .send_message(WindowMessage::open_modal(
+                                self.message_boxes.load_scene,
+                                MessageDirection::ToWidget,
+                                true,
+                        ));
+                    } else {
+                        // just load scene
+                        self.message_sender
                         .send(Message::LoadScene(path.to_owned()))
                         .unwrap();
+                    }
                 }
             }
             UiMessageData::MenuItem(MenuItemMessage::Click) => {
@@ -782,41 +1028,19 @@ impl Menu {
                             .send(Message::SaveScene(scene_path.clone()))
                             .unwrap();
                     } else {
-                        // If scene wasn't saved yet - open Save As window.
-                        ctx.engine
-                            .user_interface
-                            .send_message(WindowMessage::open_modal(
-                                self.save_file_selector,
-                                MessageDirection::ToWidget,
-                                true,
-                            ));
-                        ctx.engine
-                            .user_interface
-                            .send_message(FileSelectorMessage::path(
-                                self.save_file_selector,
-                                MessageDirection::ToWidget,
-                                std::env::current_dir().unwrap(),
-                            ));
-                    }
+                        self.open_save_file_selector(&mut ctx.engine.user_interface);
+                    }    
                 } else if message.destination() == self.save_as {
-                    ctx.engine
-                        .user_interface
-                        .send_message(WindowMessage::open_modal(
-                            self.save_file_selector,
-                            MessageDirection::ToWidget,
-                            true,
-                        ));
-                    ctx.engine
-                        .user_interface
-                        .send_message(FileSelectorMessage::path(
-                            self.save_file_selector,
-                            MessageDirection::ToWidget,
-                            std::env::current_dir().unwrap(),
-                        ));
+                    self.open_save_file_selector(&mut ctx.engine.user_interface);
                 } else if message.destination() == self.load {
                     self.open_load_file_selector(&mut ctx.engine.user_interface);
                 } else if message.destination() == self.close_scene {
-                    self.message_sender.send(Message::CloseScene).unwrap();
+                    if let Some(editor_scene) = ctx.editor_scene {
+                        self.open_close_scene_message_box(&mut ctx.engine.user_interface);
+                    } else {
+                        self.message_sender
+                            .send(Message::CloseScene).unwrap();
+                    }
                 } else if message.destination() == self.copy {
                     if let Some(editor_scene) = ctx.editor_scene {
                         if let Selection::Graph(selection) = &editor_scene.selection {
@@ -845,7 +1069,12 @@ impl Menu {
                         .send(Message::Exit { force: false })
                         .unwrap();
                 } else if message.destination() == self.new_scene {
-                    self.message_sender.send(Message::NewScene).unwrap();
+                    if let Some(editor_scene) = ctx.editor_scene.as_ref() {
+                        self.open_new_scene_message_box(&mut ctx.engine.user_interface);
+                    } else {
+                        self.message_sender
+                            .send(Message::NewScene).unwrap();
+                    }
                 } else if message.destination() == self.asset_browser {
                     switch_window_state(ctx.asset_window, &mut ctx.engine.user_interface, false);
                 } else if message.destination() == self.light_panel {
@@ -867,7 +1096,7 @@ impl Menu {
                     ctx.engine
                         .user_interface
                         .send_message(WindowMessage::open_modal(
-                            ctx.path_fixer,
+                            self.path_fixer.window,
                             MessageDirection::ToWidget,
                             true,
                         ));
@@ -876,7 +1105,7 @@ impl Menu {
                         ctx.engine
                             .user_interface
                             .send_message(WindowMessage::open_modal(
-                                ctx.configurator_window,
+                                self.configurator.window,
                                 MessageDirection::ToWidget,
                                 true,
                             ));
@@ -893,24 +1122,18 @@ impl Menu {
                 }
             }
             UiMessageData::Widget(WidgetMessage::KeyDown(key)) => {
-                if !skip_shortcuts {
+                if !self.restriction.active {
                     match *key {
                         KeyCode::L => {
-                            if ctx.engine.user_interface.keyboard_modifiers().control {
-                                self
-                                    .open_load_file_selector(&mut ctx.engine.user_interface);
+                            if ctx.engine.user_interface.keyboard_modifiers().control  {
+                                self.open_load_file_selector(&mut ctx.engine.user_interface);
                             }
                         }
                         KeyCode::N => {
+                            println!("N pressed from menu!");
                             if ctx.engine.user_interface.keyboard_modifiers().control {
                                 if let Some(editor_scene) = ctx.editor_scene {
-                                    ctx.engine
-                                            .user_interface
-                                            .send_message(WindowMessage::open_modal(
-                                                self.new_scene_message_box, // create new window object to open.
-                                                MessageDirection::ToWidget,
-                                                true,
-                                    ));
+                                    self.open_new_scene_message_box(&mut ctx.engine.user_interface);
                                 } else {
                                     self.message_sender
                                         .send(Message::NewScene).unwrap();
@@ -920,13 +1143,7 @@ impl Menu {
                         KeyCode::Q => {
                             if ctx.engine.user_interface.keyboard_modifiers().control {
                                 if let Some(editor_scene) = ctx.editor_scene {
-                                    ctx.engine
-                                            .user_interface
-                                            .send_message(WindowMessage::open_modal(
-                                                self.close_scene_message_box, // create new window object to open.
-                                                MessageDirection::ToWidget,
-                                                true,
-                                    ));
+                                    self.open_close_scene_message_box(&mut ctx.engine.user_interface);
                                 } else {
                                     self.message_sender
                                         .send(Message::CloseScene).unwrap();
@@ -934,109 +1151,140 @@ impl Menu {
                             }
                         }
                         KeyCode::S => {
-                            if ctx.engine.user_interface.keyboard_modifiers().control &&  ctx.engine.user_interface.keyboard_modifiers().shift {
-                                // ...
-                                ctx.engine
-                                    .user_interface
-                                    .send_message(WindowMessage::open_modal(
-                                        self.save_file_selector,
-                                        MessageDirection::ToWidget,
-                                        true,
-                                    ));
+                            if ctx.engine.user_interface.keyboard_modifiers().control &&  ctx.engine.user_interface.keyboard_modifiers().shift {   
+                                if let Some(editor_scene) = ctx.editor_scene {
+                                }
+                                self.open_save_file_selector(&mut ctx.engine.user_interface);
+
                             } else if ctx.engine.user_interface.keyboard_modifiers().control {
-                                if let Some(scene_path) =
-                                    ctx.editor_scene.as_ref().map(|s| s.path.as_ref()).flatten()
+                                if let Some(editor_scene) = ctx.editor_scene {
+                                    if let Some(scene_path) = editor_scene.path.as_ref()
                                     {
                                         self.message_sender
                                             .send(Message::SaveScene(scene_path.clone()))
                                             .unwrap();
                                     } else {
-                                        // If scene wasn't saved yet - open Save As window.
-                                        ctx.engine
-                                            .user_interface
-                                            .send_message(WindowMessage::open_modal(
-                                                self.save_file_selector,
-                                                MessageDirection::ToWidget,
-                                                true,
-                                            ));
-                                        ctx.engine
-                                            .user_interface
-                                            .send_message(FileSelectorMessage::path(
-                                                self.save_file_selector,
-                                                MessageDirection::ToWidget,
-                                                std::env::current_dir().unwrap(),
-                                            ));
-                                    }
+                                        self.open_save_file_selector(&mut ctx.engine.user_interface);
+                                    }     
+                                }
                             }
                         }
                         _ => (),
                     }
                 }
             }
-            UiMessageData::MessageBox(MessageBoxMessage::Close(result))
-                if message.destination() == self.new_scene_message_box =>
-            {
-                match result {
-                    MessageBoxResult::No => {
-                        self.message_sender
-                            .send(Message::NewScene)
-                            .unwrap();
+            UiMessageData::MessageBox(MessageBoxMessage::Close(result)) => {
+                if message.destination() == self.message_boxes.exit {
+                    match result {
+                        MessageBoxResult::No => {
+                            self.message_sender
+                                .send(Message::Exit { force: true })
+                                .unwrap();
+                        }
+                        MessageBoxResult::Yes => {
+                            if let Some(scene) = ctx.editor_scene {
+                                if let Some(path) = scene.path.as_ref() {
+                                    self.message_sender
+                                        .send(Message::SaveScene(path.clone()))
+                                        .unwrap();
+                                    self.message_sender
+                                        .send(Message::Exit { force: true })
+                                        .unwrap();
+                                } else {
+                                    scene.selector_flag = Some(SaveFileSelectorFlag::Exiting);
+                                    // Scene wasn't saved yet, open Save As dialog.
+                                    self.open_save_file_selector(&mut ctx.engine.user_interface);
+                                }
+                            }
+                        }
+                        _ => {}
                     }
-                    MessageBoxResult::Yes => {
-                        if let Some(scene) = ctx.editor_scene.as_ref() {
-                            if let Some(path) = ctx.editor_scene.unwrap().path.as_ref() {
-                                self.message_sender
-                                    .send(Message::SaveScene(path.clone()))
-                                    .unwrap();
+                }
+                else if message.destination() == self.message_boxes.new_scene {
+                    match result {
+                        MessageBoxResult::No => {
+                            if let Some(scene) = ctx.editor_scene.as_ref() {
                                 self.message_sender
                                     .send(Message::NewScene)
                                     .unwrap();
-                            } else {
-                                // Scene wasn't saved yet, open Save As dialog.
-                                ctx.engine
-                                    .user_interface
-                                    .send_message(WindowMessage::open_modal(
-                                        self.save_file_selector,
-                                        MessageDirection::ToWidget,
-                                        true,
-                                    ));
                             }
                         }
-                    }
-                    _ => {}
-                }
-            }
-            UiMessageData::MessageBox(MessageBoxMessage::Close(result))
-                if message.destination() == self.close_scene_message_box =>
-            {
-                match result {
-                    MessageBoxResult::No => {
-                        self.message_sender
-                            .send(Message::CloseScene)
-                            .unwrap();
-                    }
-                    MessageBoxResult::Yes => {
-                        if let Some(scene) = ctx.editor_scene.as_ref() {
-                            if let Some(path) = ctx.editor_scene.unwrap().path.as_ref() {
-                                self.message_sender
-                                    .send(Message::SaveScene(path.clone()))
-                                    .unwrap();
-                                self.message_sender
-                                    .send(Message::CloseScene)
-                                    .unwrap();
-                            } else {
-                                // Scene wasn't saved yet, open Save As dialog.
-                                ctx.engine
-                                    .user_interface
-                                    .send_message(WindowMessage::open_modal(
-                                        self.save_file_selector,
-                                        MessageDirection::ToWidget,
-                                        true,
-                                    ));
+                        MessageBoxResult::Yes => {
+                            if let Some(scene) = ctx.editor_scene {
+                                if let Some(path) = scene.path.as_ref() {
+                                    self.message_sender
+                                        .send(Message::SaveScene(path.clone()))
+                                        . unwrap();
+                                    self.message_sender
+                                        .send(Message::NewScene)
+                                        .unwrap();
+                                } else {
+                                    scene.selector_flag = Some(SaveFileSelectorFlag::NewScene);
+                                    // Scene wasn't saved yet, open Save As dialog.
+                                    self.open_save_file_selector(&mut ctx.engine.user_interface);
+                                }
                             }
                         }
+                        _ => {}    
                     }
-                    _ => {}
+                } else if message.destination() == self.message_boxes.close_scene {
+                    match result {
+                        MessageBoxResult::No => {
+                            if let Some(scene) = ctx.editor_scene.as_ref() {
+                                self.message_sender
+                                .send(Message::CloseScene)
+                                .unwrap();
+                            }
+                        }
+                        MessageBoxResult::Yes => {
+                            if let Some(scene) = ctx.editor_scene { // might not be needed since message box means a scene is active
+                                if let Some(path) = scene.path.as_ref() {
+                                    self.message_sender
+                                        .send(Message::SaveScene(path.clone()))
+                                        .unwrap();
+                                    self.message_sender
+                                        .send(Message::CloseScene)
+                                        .unwrap();
+                                    scene.selector_flag = None;
+                                } else {
+                                    // Scene wasn't saved yet, open Save As dialog.
+                                    scene.selector_flag = Some(SaveFileSelectorFlag::ClosingScene);
+                                    self.open_save_file_selector(&mut ctx.engine.user_interface);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                } else if message.destination() == self.message_boxes.load_scene {
+                    match result {
+                        // no saving before loading scene
+                        MessageBoxResult::No => {
+                            if let Some(scene) = ctx.editor_scene.as_ref() {
+                                self.message_sender
+                                // load_path variable updated in load_file_Selector commit event
+                                .send(Message::LoadScene(scene.next_path.as_ref().unwrap().to_owned()))
+                                .unwrap();
+                            }
+                        }
+                        // saving before loading scene
+                        MessageBoxResult::Yes => {
+                            if let Some(scene) = ctx.editor_scene {
+                                if let Some(path) = scene.path.as_ref() {
+                                    self.message_sender
+                                        .send(Message::SaveScene(path.to_owned()))
+                                        .unwrap();
+                                    self.message_sender
+                                        .send(Message::LoadScene(scene.next_path.as_ref().unwrap().to_owned()))
+                                        .unwrap();
+                                } else {
+                                    // Scene wasn't saved yet, open Save As dialog.
+                                    scene.selector_flag = Some(SaveFileSelectorFlag::LoadingScene);
+                                    self.open_save_file_selector(&mut ctx.engine.user_interface);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
                 }
             }
             _ => (),

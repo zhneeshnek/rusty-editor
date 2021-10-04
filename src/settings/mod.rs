@@ -316,7 +316,8 @@ impl SettingsWindow {
         settings: &Settings,
         section: Option<SettingsSectionKind>,
     ) {
-        ui.send_message(WindowMessage::open(
+        // open in modal so no interference with other widgets.
+        ui.send_message(WindowMessage::open_modal(
             self.window,
             MessageDirection::ToWidget,
             true,
@@ -348,7 +349,7 @@ impl SettingsWindow {
     pub fn handle_message(
         &mut self,
         message: &UiMessage,
-        editor_scene: &EditorScene,
+        editor_scene: Option<&EditorScene>,
         engine: &mut GameEngine,
         settings: &mut Settings,
     ) {
@@ -356,8 +357,10 @@ impl SettingsWindow {
 
         let old_settings = settings.clone();
 
-        self.graphics_section
-            .handle_message(message, editor_scene, engine, &mut settings.graphics);
+        if let Some(scene) = editor_scene {
+            self.graphics_section
+            .handle_message(message, scene, engine, &mut settings.graphics);
+        }
         self.debugging_section
             .handle_message(message, &mut settings.debugging);
         self.move_mode_section
@@ -384,7 +387,7 @@ impl SettingsWindow {
                                 entry.section,
                                 MessageDirection::ToWidget,
                                 entry.tree_item == selected,
-                            ))
+                            ));
                     }
                 }
             }

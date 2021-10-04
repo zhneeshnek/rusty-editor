@@ -23,8 +23,21 @@ pub mod clipboard;
 #[macro_use]
 pub mod commands;
 
+// SaveFileSelectorFlag used to determine what Message to send on a FileSelector::Commit event on a save file selector.
+#[derive(Debug)]
+pub enum SaveFileSelectorFlag {
+    NewScene,
+    ClosingScene,
+    LoadingScene,
+    Exiting
+}
+
 pub struct EditorScene {
     pub path: Option<PathBuf>,
+    // store a load path for a scene to be loaded, while saving this scene.
+    pub next_path: Option<PathBuf>,
+    // selector flag determines what happens with current scene when saving the scene from a file selector.
+    pub selector_flag: Option<SaveFileSelectorFlag>,
     pub scene: Handle<Scene>,
     // Handle to a root for all editor nodes.
     pub root: Handle<Node>,

@@ -39,7 +39,6 @@ use crate::{
     asset::{AssetBrowser, AssetKind},
     camera::CameraController,
     command::{panel::CommandStackViewer, CommandStack},
-    configurator::Configurator,
     gui::make_dropdown_list_option,
     interaction::{
         move_mode::MoveInteractionMode,
@@ -71,7 +70,6 @@ use crate::{
     settings::{Settings, SettingsSectionKind},
     sidebar::SideBar,
     sound::SoundPanel,
-    utils::path_fixer::PathFixer,
     world_outliner::WorldOutliner,
 };
 use rg3d::gui::image::Image;
@@ -97,7 +95,7 @@ use rg3d::{
         dock::{DockingManagerBuilder, TileBuilder, TileContent},
         draw,
         dropdown_list::DropdownListBuilder,
-        file_browser::{FileBrowserMode, FileSelectorBuilder, Filter},
+        file_browser::{FileSelectorBuilder, Filter},
         grid::{Column, GridBuilder, Row},
         image::ImageBuilder,
         message::{
@@ -105,7 +103,6 @@ use rg3d::{
             MessageDirection, MouseButton, UiMessageData, WidgetMessage, WindowMessage,
         },
         message::{DropdownListMessage, TextBoxMessage},
-        messagebox::{MessageBoxBuilder, MessageBoxButtons, MessageBoxResult},
         stack_panel::StackPanelBuilder,
         text::TextBuilder,
         text_box::TextBoxBuilder,
@@ -778,6 +775,14 @@ impl Message {
     }
 }
 
+// Purpose: determines what to do with incoming messages to the scene. (None == normal mode) 
+#[derive(Debug, PartialEq, PartialOrd)]
+pub enum SceneInputRestriction {
+    Off,
+    Initiating, // sort out last incoming, scene-mutating messages 
+    Restricting // restrict any input
+}
+
 pub fn make_scene_file_filter() -> Filter {
     Filter::new(|p: &Path| {
         if let Some(ext) = p.extension() {
@@ -786,20 +791,6 @@ pub fn make_scene_file_filter() -> Filter {
             p.is_dir()
         }
     })
-}
-
-pub fn make_save_file_selector(ctx: &mut BuildContext) -> Handle<UiNode> {
-    FileSelectorBuilder::new(
-        WindowBuilder::new(WidgetBuilder::new().with_width(300.0).with_height(400.0))
-            .with_title(WindowTitle::Text("Save Scene As".into()))
-            .open(false),
-    )
-    .with_mode(FileBrowserMode::Save {
-        default_file_name: PathBuf::from("unnamed.rgs"),
-    })
-    .with_path("./")
-    .with_filter(make_scene_file_filter())
-    .build(ctx)
 }
 
 struct Editor {
@@ -814,20 +805,15 @@ struct Editor {
     root_grid: Handle<UiNode>,
     preview: ScenePreview,
     asset_browser: AssetBrowser,
-    exit_message_box: Handle<UiNode>,
-    save_file_selector: Handle<UiNode>,
     light_panel: LightPanel,
     sound_panel: SoundPanel,
     menu: Menu,
     exit: bool,
-    configurator: Configurator,
     log: Log,
     command_stack_viewer: CommandStackViewer,
-    validation_message_box: Handle<UiNode>,
     navmesh_panel: NavmeshPanel,
     settings: Settings,
     model_import_dialog: ModelImportDialog,
-    path_fixer: PathFixer,
     material_editor: MaterialEditor,
 }
 
@@ -841,18 +827,6 @@ impl Editor {
             Font::default_char_set(),
         )
         .unwrap();
-
-        let configurator = Configurator::new(
-            message_sender.clone(),
-            &mut engine.user_interface.build_ctx(),
-        );
-        engine
-            .user_interface
-            .send_message(WindowMessage::open_modal(
-                configurator.window,
-                MessageDirection::ToWidget,
-                true,
-            ));
 
         let mut settings = Settings::default();
 
@@ -1001,31 +975,6 @@ impl Editor {
         .add_column(Column::stretch())
         .build(ctx);
 
-        let save_file_selector = make_save_file_selector(ctx);
-
-        let exit_message_box = MessageBoxBuilder::new(
-            WindowBuilder::new(WidgetBuilder::new().with_width(300.0).with_height(100.0))
-                .can_close(false)
-                .can_minimize(false)
-                .open(false)
-                .with_title(WindowTitle::Text("Unsaved changes".to_owned())),
-        )
-        .with_text("There are unsaved changes. Do you wish to save them before exit?")
-        .with_buttons(MessageBoxButtons::YesNoCancel)
-        .build(ctx);
-
-        let validation_message_box = MessageBoxBuilder::new(
-            WindowBuilder::new(WidgetBuilder::new().with_width(400.0).with_height(500.0))
-                .can_close(false)
-                .can_minimize(false)
-                .open(false)
-                .with_title(WindowTitle::Text("Validation failed!".to_owned())),
-        )
-        .with_buttons(MessageBoxButtons::Ok)
-        .build(ctx);
-
-        let path_fixer = PathFixer::new(ctx);
-
         let test_material = Arc::new(Mutex::new(Material::standard()));
         let mut material_editor = MaterialEditor::new(engine);
         material_editor.set_material(Some(test_material), engine);
@@ -1046,16 +995,11 @@ impl Editor {
             menu,
             exit: false,
             asset_browser,
-            exit_message_box,
-            save_file_selector,
-            configurator,
             log,
             light_panel,
             command_stack_viewer,
-            validation_message_box,
             settings,
             model_import_dialog,
-            path_fixer,
             material_editor,
         };
 
@@ -1113,6 +1057,8 @@ impl Editor {
 
         let editor_scene = EditorScene {
             path: path.clone(),
+            next_path: None,
+            selector_flag: None,
             root,
             camera_controller,
             physics: Physics::new(&scene),
@@ -1197,7 +1143,12 @@ impl Editor {
             return;
         }
 
-        self.configurator.handle_ui_message(message, engine);
+        let mut current_mode: Option<&mut InteractionMode> = None;
+
+        if let Some(current_im) = self.current_interaction_mode.as_ref() {
+            current_mode = Some(&mut self.interaction_modes[*current_im as usize]);
+        }
+
         self.menu.handle_ui_message(
             message,
             MenuContext {
@@ -1206,20 +1157,18 @@ impl Editor {
                 sidebar_window: self.sidebar.window,
                 world_outliner_window: self.world_outliner.window,
                 asset_window: self.asset_browser.window,
-                configurator_window: self.configurator.window,
                 light_panel: self.light_panel.window,
                 log_panel: self.log.window,
                 settings: &mut self.settings,
-                path_fixer: self.path_fixer.window,
+                current_interaction_mode: current_mode,
             },
         );
 
         self.log.handle_ui_message(message, engine);
         self.asset_browser.handle_ui_message(message, engine);
         self.command_stack_viewer.handle_ui_message(message);
-        self.path_fixer
-            .handle_ui_message(message, &mut engine.user_interface);
-
+        
+        
         if let Some(editor_scene) = self.scene.as_mut() {
             self.navmesh_panel.handle_message(
                 message,
@@ -1351,7 +1300,7 @@ impl Editor {
                             }
                         }
                         WidgetMessage::KeyDown(key) => {
-                            editor_scene.camera_controller.on_key_down(key);
+                            editor_scene.camera_controller.on_key_down(key, &engine.user_interface.keyboard_modifiers());
 
                             if let Some(current_im) = self.current_interaction_mode {
                                 self.interaction_modes[current_im as usize].on_key_down(
@@ -1541,58 +1490,10 @@ impl Editor {
                         _ => {}
                     }
                 }
-            }
 
-            match message.data() {
-                UiMessageData::MessageBox(MessageBoxMessage::Close(result))
-                    if message.destination() == self.exit_message_box =>
-                {
-                    match result {
-                        MessageBoxResult::No => {
-                            self.message_sender
-                                .send(Message::Exit { force: true })
-                                .unwrap();
-                        }
-                        MessageBoxResult::Yes => {
-                            if let Some(scene) = self.scene.as_ref() {
-                                if let Some(path) = scene.path.as_ref() {
-                                    self.message_sender
-                                        .send(Message::SaveScene(path.clone()))
-                                        .unwrap();
-                                    self.message_sender
-                                        .send(Message::Exit { force: true })
-                                        .unwrap();
-                                } else {
-                                    // Scene wasn't saved yet, open Save As dialog.
-                                    engine
-                                        .user_interface
-                                        .send_message(WindowMessage::open_modal(
-                                            self.save_file_selector,
-                                            MessageDirection::ToWidget,
-                                            true,
-                                        ));
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                UiMessageData::FileSelector(FileSelectorMessage::Commit(path))
-                    if message.destination() == self.save_file_selector =>
-                {
-                    self.message_sender
-                        .send(Message::SaveScene(path.clone()))
-                        .unwrap();
-                    self.message_sender
-                        .send(Message::Exit { force: true })
-                        .unwrap();
-                }
-
-                _ => (),
             }
         }
     }
-
     fn sync_to_model(&mut self, engine: &mut GameEngine) {
         scope_profile!();
 
@@ -1634,7 +1535,7 @@ impl Editor {
 
         while let Ok(message) = self.message_receiver.try_recv() {
             self.log.handle_message(&message, engine);
-            self.path_fixer
+            self.menu.path_fixer
                 .handle_message(&message, &mut engine.user_interface);
 
             match message {
@@ -1692,32 +1593,34 @@ impl Editor {
                     needs_sync = true;
                 }
                 Message::SaveScene(path) => {
-                    if let Some(editor_scene) = self.scene.as_mut() {
-                        match editor_scene.save(path.clone(), engine) {
-                            Ok(message) => {
-                                engine.user_interface.send_message(WindowMessage::title(
-                                    self.preview.window,
-                                    MessageDirection::ToWidget,
-                                    WindowTitle::Text(format!(
-                                        "Scene Preview - {}",
-                                        path.display()
-                                    )),
-                                ));
-
-                                self.message_sender.send(Message::Log(message)).unwrap();
-                            }
-                            Err(message) => {
-                                self.message_sender
-                                    .send(Message::Log(message.clone()))
-                                    .unwrap();
-
-                                engine.user_interface.send_message(MessageBoxMessage::open(
-                                    self.validation_message_box,
-                                    MessageDirection::ToWidget,
-                                    None,
-                                    Some(message),
-                                ));
-                            }
+                    // allow creating a new scene with save_as if none loaded yet.
+                    if let None = self.scene.as_ref() {
+                        let mut scene = Scene::new();
+                        scene.ambient_lighting_color = Color::opaque(200, 200, 200);
+                        self.set_scene(engine, scene, None);
+                    }
+                    match self.scene.as_mut().unwrap().save(path.clone(), engine) {
+                        Ok(message) => {
+                            engine.user_interface.send_message(WindowMessage::title(
+                                self.preview.window,
+                                MessageDirection::ToWidget,
+                                WindowTitle::Text(format!(
+                                    "Scene Preview - {}",
+                                    path.display()
+                                )),
+                            ));
+                            self.message_sender.send(Message::Log(message)).unwrap();
+                        }
+                        Err(message) => {
+                            self.message_sender
+                                .send(Message::Log(message.clone()))
+                                .unwrap();
+                            engine.user_interface.send_message(MessageBoxMessage::open(
+                                self.menu.message_boxes.validation,
+                                MessageDirection::ToWidget,
+                                None,
+                                Some(message),
+                            ));
                         }
                     }
                 }
@@ -1726,7 +1629,7 @@ impl Editor {
                         rg3d::core::futures::executor::block_on(Scene::from_file(
                             &scene_path,
                             engine.resource_manager.clone(),
-                            &MaterialSearchOptions::UsePathDirectly,
+                            &MaterialSearchOptions::RecursiveUp,
                         ))
                     };
                     match result {
@@ -1748,7 +1651,7 @@ impl Editor {
                         self.exit = true;
                     } else if self.scene.is_some() {
                         engine.user_interface.send_message(MessageBoxMessage::open(
-                            self.exit_message_box,
+                            self.menu.message_boxes.exit,
                             MessageDirection::ToWidget,
                             None,
                             None,
@@ -1763,18 +1666,27 @@ impl Editor {
                 Message::CloseScene => {
                     if let Some(editor_scene) = self.scene.take() {
                         engine.scenes.remove(editor_scene.scene);
-                        needs_sync = true;
-
-                        // Preview frame has scene frame texture assigned, it must be cleared explicitly,
-                        // otherwise it will show last rendered frame in preview which is not what we want.
-                        engine.user_interface.send_message(ImageMessage::texture(
-                            self.preview.frame,
-                            MessageDirection::ToWidget,
-                            None,
-                        ));
                     }
+                    // reset title text of scene preview.
+                    engine.user_interface.send_message(WindowMessage::title(
+                        self.preview.window,
+                        MessageDirection::ToWidget,
+                        WindowTitle::Text(format!("Scene Preview"))
+                        ));
+
+                    needs_sync = true;
+                    // Preview frame has scene frame texture assigned, it must be cleared explicitly,
+                    // otherwise it will show last rendered frame in preview which is not what we want.
+                    engine.user_interface.send_message(ImageMessage::texture(
+                        self.preview.frame,
+                        MessageDirection::ToWidget,
+                        None,
+                    ));
                 }
                 Message::NewScene => {
+                    if let Some(editor_scene) = self.scene.take() {
+                        engine.scenes.remove(editor_scene.scene);
+                    }
                     let mut scene = Scene::new();
 
                     scene.ambient_lighting_color = Color::opaque(200, 200, 200);
