@@ -775,14 +775,6 @@ impl Message {
     }
 }
 
-// Purpose: determines what to do with incoming messages to the scene. (None == normal mode) 
-#[derive(Debug, PartialEq, PartialOrd)]
-pub enum SceneInputRestriction {
-    Off,
-    Initiating, // sort out last incoming, scene-mutating messages 
-    Restricting // restrict any input
-}
-
 pub fn make_scene_file_filter() -> Filter {
     Filter::new(|p: &Path| {
         if let Some(ext) = p.extension() {
