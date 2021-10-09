@@ -1,6 +1,6 @@
 use crate::scene::commands::sound::MoveSpatialSoundSourceCommand;
 use crate::scene::commands::SceneCommand;
-use crate::sound::SoundSelection;
+use crate::world::sound::SoundSelection;
 use crate::{
     camera::CameraController,
     interaction::{
@@ -262,6 +262,7 @@ pub struct MoveInteractionMode {
     move_context: Option<MoveContext>,
     move_gizmo: MoveGizmo,
     message_sender: Sender<Message>,
+    frozen: bool,
 }
 
 impl MoveInteractionMode {
@@ -274,6 +275,7 @@ impl MoveInteractionMode {
             move_context: None,
             move_gizmo: MoveGizmo::new(editor_scene, engine),
             message_sender,
+            frozen: false,
         }
     }
 }
@@ -457,6 +459,10 @@ impl InteractionModeTrait for MoveInteractionMode {
         camera: Handle<Node>,
         engine: &mut GameEngine,
     ) {
+        if self.frozen {
+            return;
+        }
+
         let scene = &mut engine.scenes[editor_scene.scene];
         let graph = &mut scene.graph;
         if !editor_scene.selection.is_empty() {
@@ -472,5 +478,14 @@ impl InteractionModeTrait for MoveInteractionMode {
     fn deactivate(&mut self, editor_scene: &EditorScene, engine: &mut GameEngine) {
         let graph = &mut engine.scenes[editor_scene.scene].graph;
         self.move_gizmo.set_visible(graph, false);
+    }
+
+    fn freeze(&mut self, editor_scene: &EditorScene, engine: &mut GameEngine) {
+        self.deactivate(editor_scene, engine);
+        self.frozen = true;
+    }
+
+    fn unfreeze(&mut self) {
+        self.frozen = false;
     }
 }

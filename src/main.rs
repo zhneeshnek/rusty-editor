@@ -28,17 +28,14 @@ pub mod project_dirs;
 pub mod scene;
 pub mod settings;
 pub mod sidebar;
-pub mod sound;
 pub mod utils;
-pub mod world_outliner;
+pub mod world;
 
-use crate::asset::AssetItem;
-use crate::command::Command;
-use crate::scene::commands::SceneCommand;
+use crate::world::physics::PhysicsViewer;
 use crate::{
-    asset::{AssetBrowser, AssetKind},
+    asset::{AssetBrowser, AssetItem, AssetKind},
     camera::CameraController,
-    command::{panel::CommandStackViewer, CommandStack},
+    command::{panel::CommandStackViewer, CommandStack, Command},
     gui::make_dropdown_list_option,
     interaction::{
         move_mode::MoveInteractionMode,
@@ -63,18 +60,15 @@ use crate::{
             graph::LoadModelCommand, make_delete_selection_command, mesh::SetMeshTextureCommand,
             particle_system::SetParticleSystemTextureCommand, sound::DeleteSoundSourceCommand,
             sprite::SetSpriteTextureCommand, ChangeSelectionCommand, CommandGroup, PasteCommand,
-            SceneContext,
+            SceneCommand, SceneContext,
         },
         EditorScene, Selection,
     },
     settings::{Settings, SettingsSectionKind},
     sidebar::SideBar,
-    sound::SoundPanel,
-    world_outliner::WorldOutliner,
+    world::graph::SceneGraphViewer,
+    world::sound::SoundPanel,
 };
-use rg3d::gui::image::Image;
-use rg3d::gui::message::UiMessage;
-use rg3d::gui::{BuildContext, UiNode, UserInterface};
 use rg3d::{
     core::{
         algebra::{Point3, Vector2},
@@ -97,10 +91,13 @@ use rg3d::{
         dropdown_list::DropdownListBuilder,
         file_browser::{FileSelectorBuilder, Filter},
         grid::{Column, GridBuilder, Row},
+        image::Image,
         image::ImageBuilder,
+        message::UiMessage,
         message::{
             ButtonMessage, FileSelectorMessage, ImageMessage, KeyCode, MessageBoxMessage,
             MessageDirection, MouseButton, UiMessageData, WidgetMessage, WindowMessage,
+            MenuMessage,
         },
         message::{DropdownListMessage, TextBoxMessage},
         stack_panel::StackPanelBuilder,
@@ -109,7 +106,8 @@ use rg3d::{
         ttf::Font,
         widget::WidgetBuilder,
         window::{WindowBuilder, WindowTitle},
-        HorizontalAlignment, Orientation, Thickness, VerticalAlignment,
+        BuildContext, HorizontalAlignment, Orientation, Thickness, UiNode, UserInterface,
+        VerticalAlignment,
     },
     material::{Material, PropertyValue},
     resource::texture::{CompressionOptions, Texture, TextureKind, TextureState},
@@ -749,6 +747,17 @@ impl ScenePreview {
 }
 
 #[derive(Debug)]
+pub enum SyncDestination {
+    CommandStackViewer,
+    Menu,
+    WorldOutliner,
+    Sidebar,
+    SoundPanel,
+    MaterialEditor,
+    NavmeshPanel,
+}
+
+#[derive(Debug)]
 pub enum Message {
     DoSceneCommand(SceneCommand),
     UndoSceneCommand,
@@ -756,6 +765,8 @@ pub enum Message {
     ClearSceneCommandStack,
     SelectionChanged,
     SyncToModel,
+    // sync certain ui components, rather than whole UI on every sync
+    _SyncToModel { destination: Option<SyncDestination> } , 
     SaveScene(PathBuf),
     LoadScene(PathBuf),
     CloseScene,
@@ -793,7 +804,7 @@ struct Editor {
     message_receiver: Receiver<Message>,
     interaction_modes: Vec<InteractionMode>,
     current_interaction_mode: Option<InteractionModeKind>,
-    world_outliner: WorldOutliner,
+    world_outliner: SceneGraphViewer,
     root_grid: Handle<UiNode>,
     preview: ScenePreview,
     asset_browser: AssetBrowser,
@@ -807,6 +818,7 @@ struct Editor {
     settings: Settings,
     model_import_dialog: ModelImportDialog,
     material_editor: MaterialEditor,
+    physics_viewer: PhysicsViewer,
 }
 
 impl Editor {
@@ -852,11 +864,12 @@ impl Editor {
         let asset_browser = AssetBrowser::new(engine);
         let menu = Menu::new(engine, message_sender.clone(), &settings);
         let light_panel = LightPanel::new(engine);
+        let physics_viewer = PhysicsViewer::new(engine);
 
         let ctx = &mut engine.user_interface.build_ctx();
         let sidebar = SideBar::new(ctx, message_sender.clone());
         let navmesh_panel = NavmeshPanel::new(ctx, message_sender.clone());
-        let world_outliner = WorldOutliner::new(ctx, message_sender.clone());
+        let world_outliner = SceneGraphViewer::new(ctx, message_sender.clone());
         let command_stack_viewer = CommandStackViewer::new(ctx, message_sender.clone());
         let sound_panel = SoundPanel::new(ctx);
         let log = Log::new(ctx);
@@ -879,7 +892,7 @@ impl Editor {
                                             tiles: [
                                                 TileBuilder::new(WidgetBuilder::new())
                                                     .with_content(TileContent::VerticalTiles {
-                                                        splitter: 0.6,
+                                                        splitter: 0.5,
                                                         tiles: [
                                                             TileBuilder::new(WidgetBuilder::new())
                                                                 .with_content(TileContent::Window(
@@ -887,9 +900,35 @@ impl Editor {
                                                                 ))
                                                                 .build(ctx),
                                                             TileBuilder::new(WidgetBuilder::new())
-                                                                .with_content(TileContent::Window(
-                                                                    sound_panel.window,
-                                                                ))
+                                                                .with_content(
+                                                                    TileContent::VerticalTiles {
+                                                                        splitter: 0.5,
+                                                                        tiles: [
+                                                                            TileBuilder::new(
+                                                                                WidgetBuilder::new(
+                                                                                ),
+                                                                            )
+                                                                            .with_content(
+                                                                                TileContent::Window(
+                                                                                    sound_panel
+                                                                                        .window,
+                                                                                ),
+                                                                            )
+                                                                            .build(ctx),
+                                                                            TileBuilder::new(
+                                                                                WidgetBuilder::new(
+                                                                                ),
+                                                                            )
+                                                                            .with_content(
+                                                                                TileContent::Window(
+                                                                                    physics_viewer
+                                                                                        .window,
+                                                                                ),
+                                                                            )
+                                                                            .build(ctx),
+                                                                        ],
+                                                                    },
+                                                                )
                                                                 .build(ctx),
                                                         ],
                                                     })
@@ -993,6 +1032,7 @@ impl Editor {
             settings,
             model_import_dialog,
             material_editor,
+            physics_viewer,
         };
 
         editor.set_interaction_mode(Some(InteractionModeKind::Move), engine);
@@ -1193,6 +1233,13 @@ impl Editor {
             self.material_editor
                 .handle_ui_message(message, engine, &self.message_sender);
 
+            self.physics_viewer.handle_ui_message(
+                &self.message_sender,
+                editor_scene,
+                message,
+                engine,
+            );
+
             self.model_import_dialog.handle_ui_message(
                 message,
                 &engine.user_interface,
@@ -1292,7 +1339,7 @@ impl Editor {
                             }
                         }
                         WidgetMessage::KeyDown(key) => {
-                            editor_scene.camera_controller.on_key_down(key, &engine.user_interface.keyboard_modifiers());
+                            editor_scene.camera_controller.on_key_down(key);
 
                             if let Some(current_im) = self.current_interaction_mode {
                                 self.interaction_modes[current_im as usize].on_key_down(
@@ -1482,7 +1529,6 @@ impl Editor {
                         _ => {}
                     }
                 }
-
             }
         }
     }
@@ -1499,6 +1545,7 @@ impl Editor {
             self.sound_panel.sync_to_model(editor_scene, engine);
             self.material_editor
                 .sync_to_model(&mut engine.user_interface);
+            self.physics_viewer.sync_to_model(editor_scene, engine);
             self.command_stack_viewer.sync_to_model(
                 &mut self.command_stack,
                 &SceneContext {
@@ -1542,7 +1589,32 @@ impl Editor {
                                 resource_manager: engine.resource_manager.clone(),
                             },
                         );
-                        needs_sync = true;
+
+                        self.message_sender
+                        .send(Message::_SyncToModel { 
+                            destination: Some(SyncDestination::CommandStackViewer)
+                        })
+                        .unwrap();
+                        self.message_sender
+                            .send(Message::_SyncToModel { 
+                                destination: Some(SyncDestination::WorldOutliner)
+                            })
+                            .unwrap();
+                        self.message_sender
+                            .send(Message::_SyncToModel { 
+                                destination: Some(SyncDestination::NavmeshPanel)
+                            })
+                            .unwrap();
+                        self.message_sender
+                            .send(Message::_SyncToModel {
+                                destination: Some(SyncDestination::Sidebar)
+                            })
+                            .unwrap();
+                        self.message_sender
+                            .send(Message::_SyncToModel {
+                                destination: Some(SyncDestination::SoundPanel)
+                            })
+                            .unwrap();
                     }
                 }
                 Message::UndoSceneCommand => {
@@ -1553,8 +1625,33 @@ impl Editor {
                             editor_scene,
                             resource_manager: engine.resource_manager.clone(),
                         });
-                        needs_sync = true;
-                    }
+
+                        self.message_sender
+                        .send(Message::_SyncToModel { 
+                            destination: Some(SyncDestination::CommandStackViewer)
+                        })
+                        .unwrap();
+                        self.message_sender
+                            .send(Message::_SyncToModel { 
+                                destination: Some(SyncDestination::WorldOutliner)
+                            })
+                            .unwrap();
+                        self.message_sender
+                            .send(Message::_SyncToModel { 
+                                destination: Some(SyncDestination::NavmeshPanel)
+                            })
+                            .unwrap();
+                        self.message_sender
+                            .send(Message::_SyncToModel {
+                                destination: Some(SyncDestination::Sidebar)
+                            })
+                            .unwrap();
+                        self.message_sender
+                            .send(Message::_SyncToModel {
+                                destination: Some(SyncDestination::SoundPanel)
+                            })
+                            .unwrap();
+                        }
                 }
                 Message::RedoSceneCommand => {
                     if let Some(editor_scene) = self.scene.as_mut() {
@@ -1564,7 +1661,32 @@ impl Editor {
                             editor_scene,
                             resource_manager: engine.resource_manager.clone(),
                         });
-                        needs_sync = true;
+
+                        self.message_sender
+                            .send(Message::_SyncToModel { 
+                                destination: Some(SyncDestination::CommandStackViewer)
+                            })
+                        .unwrap();
+                        self.message_sender
+                            .send(Message::_SyncToModel { 
+                                destination: Some(SyncDestination::WorldOutliner)
+                            })
+                            .unwrap();
+                        self.message_sender
+                            .send(Message::_SyncToModel { 
+                                destination: Some(SyncDestination::NavmeshPanel)
+                            })
+                            .unwrap();
+                        self.message_sender
+                            .send(Message::_SyncToModel {
+                                destination: Some(SyncDestination::Sidebar)
+                            })
+                            .unwrap();
+                        self.message_sender
+                            .send(Message::_SyncToModel {
+                                destination: Some(SyncDestination::SoundPanel)
+                            })
+                            .unwrap();
                     }
                 }
                 Message::ClearSceneCommandStack => {
@@ -1575,7 +1697,12 @@ impl Editor {
                             editor_scene,
                             resource_manager: engine.resource_manager.clone(),
                         });
-                        needs_sync = true;
+
+                        self.message_sender
+                            .send(Message::_SyncToModel {
+                                destination: Some(SyncDestination::CommandStackViewer)
+                            })
+                            .unwrap();
                     }
                 }
                 Message::SelectionChanged => {
@@ -1584,35 +1711,93 @@ impl Editor {
                 Message::SyncToModel => {
                     needs_sync = true;
                 }
-                Message::SaveScene(path) => {
-                    // allow creating a new scene with save_as if none loaded yet.
-                    if let None = self.scene.as_ref() {
-                        let mut scene = Scene::new();
-                        scene.ambient_lighting_color = Color::opaque(200, 200, 200);
-                        self.set_scene(engine, scene, None);
-                    }
-                    match self.scene.as_mut().unwrap().save(path.clone(), engine) {
-                        Ok(message) => {
-                            engine.user_interface.send_message(WindowMessage::title(
-                                self.preview.window,
-                                MessageDirection::ToWidget,
-                                WindowTitle::Text(format!(
-                                    "Scene Preview - {}",
-                                    path.display()
-                                )),
-                            ));
-                            self.message_sender.send(Message::Log(message)).unwrap();
+                // Purpose: more efficient way of syncing ui. based on necessity, only certain components are synced,
+                // rather than whole ui
+                Message::_SyncToModel { destination } => {
+                    // sync destination
+                    if let Some(dest) = destination.as_ref() {
+                        match dest {
+                            SyncDestination::Menu => {
+                                self.menu
+                                .sync_to_model(self.scene.as_ref(), &mut engine.user_interface);
+                            },
+                            SyncDestination::CommandStackViewer => {
+                                if let Some(editor_scene) = self.scene.as_mut() {
+                                    self.command_stack_viewer.sync_to_model(
+                                        &mut self.command_stack,
+                                        &SceneContext {
+                                            scene: &mut engine.scenes[editor_scene.scene],
+                                            message_sender: self.message_sender.clone(),
+                                            editor_scene,
+                                            resource_manager: engine.resource_manager.clone(),
+                                        },
+                                        &mut engine.user_interface,
+                                    );
+                                }
+                            },
+                            SyncDestination::WorldOutliner => {
+                                if let Some(editor_scene) = self.scene.as_ref() {
+                                    self.world_outliner.sync_to_model(editor_scene, engine);
+                                } else {
+
+                                }
+                            },
+                            SyncDestination::MaterialEditor => {
+                                self.material_editor
+                                    .sync_to_model(&mut engine.user_interface);
+                            },
+                            SyncDestination::NavmeshPanel => {
+                                if let Some(editor_scene) = self.scene.as_ref() {
+                                    self.navmesh_panel.sync_to_model(editor_scene, engine);
+                                } else {
+
+                                }
+                            },
+                            SyncDestination::Sidebar => {
+                                if let Some(editor_scene) = self.scene.as_ref() {
+                                    self.sidebar.sync_to_model(editor_scene, engine);
+                                } else {
+
+                                }
+                            },
+                            SyncDestination::SoundPanel => {
+                                if let Some(editor_scene) = self.scene.as_ref() {
+                                    self.sound_panel.sync_to_model(editor_scene, engine);
+                                } else {
+
+                                }
+                            },
                         }
-                        Err(message) => {
-                            self.message_sender
-                                .send(Message::Log(message.clone()))
-                                .unwrap();
-                            engine.user_interface.send_message(MessageBoxMessage::open(
-                                self.menu.message_boxes.validation,
-                                MessageDirection::ToWidget,
-                                None,
-                                Some(message),
-                            ));
+                    } else {
+                        // sync whole ui
+                        self.sync_to_model(engine);
+                    }
+                }
+                Message::SaveScene(path) => {
+                    if let Some(editor_scene) = self.scene.as_mut() {
+                        match editor_scene.save(path.clone(), engine) {
+                            Ok(message) => {
+                                engine.user_interface.send_message(WindowMessage::title(
+                                    self.preview.window,
+                                    MessageDirection::ToWidget,
+                                    WindowTitle::Text(format!(
+                                        "Scene Preview - {}",
+                                        path.display()
+                                    )),
+                                ));
+                                self.message_sender.send(Message::Log(message)).unwrap();
+                            }
+                            Err(message) => {
+                                self.message_sender
+                                    .send(Message::Log(message.clone()))
+                                    .unwrap();
+                                engine.user_interface.send_message(MessageBoxMessage::open(
+                                    self.menu.message_boxes.validation,
+                                    MessageDirection::ToWidget,
+                                    None,
+                                    Some(message),
+                                ));
+                            }
                         }
                     }
                 }
@@ -1621,7 +1806,7 @@ impl Editor {
                         rg3d::core::futures::executor::block_on(Scene::from_file(
                             &scene_path,
                             engine.resource_manager.clone(),
-                            &MaterialSearchOptions::RecursiveUp,
+                            &MaterialSearchOptions::UsePathDirectly,
                         ))
                     };
                     match result {
@@ -1666,7 +1851,12 @@ impl Editor {
                         WindowTitle::Text(format!("Scene Preview"))
                         ));
 
-                    needs_sync = true;
+                    self.message_sender
+                        .send(Message::_SyncToModel {
+                            destination: None,
+                        })
+                        .unwrap();
+
                     // Preview frame has scene frame texture assigned, it must be cleared explicitly,
                     // otherwise it will show last rendered frame in preview which is not what we want.
                     engine.user_interface.send_message(ImageMessage::texture(
@@ -1714,7 +1904,11 @@ impl Editor {
                         )))
                         .unwrap();
 
-                    needs_sync = true;
+                    self.message_sender
+                        .send(Message::_SyncToModel { 
+                            destination: Some(SyncDestination::Menu) 
+                        })
+                        .unwrap();
                 }
                 Message::OpenSettings(section) => {
                     self.menu
@@ -1795,96 +1989,6 @@ impl Editor {
                 }
             }
 
-            fn draw_recursively(
-                node: Handle<Node>,
-                graph: &Graph,
-                ctx: &mut SceneDrawingContext,
-                editor_scene: &EditorScene,
-                show_tbn: bool,
-                show_bounds: bool,
-            ) {
-                // Ignore editor nodes.
-                if node == editor_scene.root {
-                    return;
-                }
-
-                let node = &graph[node];
-                match node {
-                    Node::Base(_) => {
-                        if show_bounds {
-                            ctx.draw_oob(
-                                &AxisAlignedBoundingBox::unit(),
-                                node.global_transform(),
-                                Color::opaque(255, 127, 39),
-                            );
-                        }
-                    }
-                    Node::Mesh(mesh) => {
-                        if show_tbn {
-                            // TODO: Add switch to settings to turn this on/off
-                            let transform = node.global_transform();
-
-                            for surface in mesh.surfaces() {
-                                for vertex in surface.data().read().unwrap().vertex_buffer.iter() {
-                                    let len = 0.025;
-                                    let position = transform
-                                        .transform_point(&Point3::from(
-                                            vertex
-                                                .read_3_f32(VertexAttributeUsage::Position)
-                                                .unwrap(),
-                                        ))
-                                        .coords;
-                                    let vertex_tangent =
-                                        vertex.read_4_f32(VertexAttributeUsage::Tangent).unwrap();
-                                    let tangent = transform
-                                        .transform_vector(&vertex_tangent.xyz())
-                                        .normalize()
-                                        .scale(len);
-                                    let normal = transform
-                                        .transform_vector(
-                                            &vertex
-                                                .read_3_f32(VertexAttributeUsage::Normal)
-                                                .unwrap()
-                                                .xyz(),
-                                        )
-                                        .normalize()
-                                        .scale(len);
-                                    let binormal = tangent
-                                        .xyz()
-                                        .cross(&normal)
-                                        .scale(vertex_tangent.w)
-                                        .normalize()
-                                        .scale(len);
-
-                                    ctx.add_line(Line {
-                                        begin: position,
-                                        end: position + tangent,
-                                        color: Color::RED,
-                                    });
-
-                                    ctx.add_line(Line {
-                                        begin: position,
-                                        end: position + normal,
-                                        color: Color::BLUE,
-                                    });
-
-                                    ctx.add_line(Line {
-                                        begin: position,
-                                        end: position + binormal,
-                                        color: Color::GREEN,
-                                    });
-                                }
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-
-                for &child in node.children() {
-                    draw_recursively(child, graph, ctx, editor_scene, show_tbn, show_bounds)
-                }
-            }
-
             // Draw pivots.
             draw_recursively(
                 scene.graph.get_root(),
@@ -1916,6 +2020,97 @@ impl Editor {
             self.asset_browser.update(engine);
             self.material_editor.update(engine);
         }
+    }
+}
+
+// moved this function definition out of update function. since it appears to me it was being redefined on every call.
+fn draw_recursively(
+    node: Handle<Node>,
+    graph: &Graph,
+    ctx: &mut SceneDrawingContext,
+    editor_scene: &EditorScene,
+    show_tbn: bool,
+    show_bounds: bool,
+) {
+    // Ignore editor nodes.
+    if node == editor_scene.root {
+        return;
+    }
+
+    let node = &graph[node];
+    match node {
+        Node::Base(_) => {
+            if show_bounds {
+                ctx.draw_oob(
+                    &AxisAlignedBoundingBox::unit(),
+                    node.global_transform(),
+                    Color::opaque(255, 127, 39),
+                );
+            }
+        }
+        Node::Mesh(mesh) => {
+            if show_tbn {
+                // TODO: Add switch to settings to turn this on/off
+                let transform = node.global_transform();
+
+                for surface in mesh.surfaces() {
+                    for vertex in surface.data().read().unwrap().vertex_buffer.iter() {
+                        let len = 0.025;
+                        let position = transform
+                            .transform_point(&Point3::from(
+                                vertex
+                                    .read_3_f32(VertexAttributeUsage::Position)
+                                    .unwrap(),
+                            ))
+                            .coords;
+                        let vertex_tangent =
+                            vertex.read_4_f32(VertexAttributeUsage::Tangent).unwrap();
+                        let tangent = transform
+                            .transform_vector(&vertex_tangent.xyz())
+                            .normalize()
+                            .scale(len);
+                        let normal = transform
+                            .transform_vector(
+                                &vertex
+                                    .read_3_f32(VertexAttributeUsage::Normal)
+                                    .unwrap()
+                                    .xyz(),
+                            )
+                            .normalize()
+                            .scale(len);
+                        let binormal = tangent
+                            .xyz()
+                            .cross(&normal)
+                            .scale(vertex_tangent.w)
+                            .normalize()
+                            .scale(len);
+
+                        ctx.add_line(Line {
+                            begin: position,
+                            end: position + tangent,
+                            color: Color::RED,
+                        });
+
+                        ctx.add_line(Line {
+                            begin: position,
+                            end: position + normal,
+                            color: Color::BLUE,
+                        });
+
+                        ctx.add_line(Line {
+                            begin: position,
+                            end: position + binormal,
+                            color: Color::GREEN,
+                        });
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+
+    for &child in node.children() {
+        draw_recursively(child, graph, ctx, editor_scene, show_tbn, show_bounds)
     }
 }
 

@@ -24,6 +24,7 @@ pub struct RotateInteractionMode {
     rotation_gizmo: RotationGizmo,
     interacting: bool,
     message_sender: Sender<Message>,
+    frozen: bool,
 }
 
 impl RotateInteractionMode {
@@ -37,6 +38,7 @@ impl RotateInteractionMode {
             rotation_gizmo: RotationGizmo::new(editor_scene, engine),
             interacting: false,
             message_sender,
+            frozen: false,
         }
     }
 }
@@ -185,6 +187,10 @@ impl InteractionModeTrait for RotateInteractionMode {
         camera: Handle<Node>,
         engine: &mut GameEngine,
     ) {
+        if self.frozen {
+            return;
+        }
+
         if let Selection::Graph(selection) = &editor_scene.selection {
             let graph = &mut engine.scenes[editor_scene.scene].graph;
             if !editor_scene.selection.is_empty() {
@@ -201,5 +207,18 @@ impl InteractionModeTrait for RotateInteractionMode {
     fn deactivate(&mut self, editor_scene: &EditorScene, engine: &mut GameEngine) {
         let graph = &mut engine.scenes[editor_scene.scene].graph;
         self.rotation_gizmo.set_visible(graph, false);
+    }
+
+    fn freeze(&mut self, editor_scene: &EditorScene, engine: &mut GameEngine) {
+        self.deactivate(editor_scene, engine);
+
+        if self.interacting {
+            self.interacting = false;
+        }
+        self.frozen = true;
+    }
+
+    fn unfreeze(&mut self) {
+        self.frozen = false;
     }
 }

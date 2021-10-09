@@ -24,6 +24,7 @@ pub struct ScaleInteractionMode {
     scale_gizmo: ScaleGizmo,
     interacting: bool,
     message_sender: Sender<Message>,
+    frozen: bool,
 }
 
 impl ScaleInteractionMode {
@@ -37,6 +38,7 @@ impl ScaleInteractionMode {
             scale_gizmo: ScaleGizmo::new(editor_scene, engine),
             interacting: false,
             message_sender,
+            frozen: false,
         }
     }
 }
@@ -184,6 +186,10 @@ impl InteractionModeTrait for ScaleInteractionMode {
         camera: Handle<Node>,
         engine: &mut GameEngine,
     ) {
+        if self.frozen {
+            return;
+        }
+
         if let Selection::Graph(selection) = &editor_scene.selection {
             let graph = &mut engine.scenes[editor_scene.scene].graph;
             if !editor_scene.selection.is_empty() {
@@ -200,5 +206,14 @@ impl InteractionModeTrait for ScaleInteractionMode {
     fn deactivate(&mut self, editor_scene: &EditorScene, engine: &mut GameEngine) {
         let graph = &mut engine.scenes[editor_scene.scene].graph;
         self.scale_gizmo.set_visible(graph, false);
+    }
+
+    fn freeze(&mut self, editor_scene: &EditorScene, engine: &mut GameEngine) {
+        self.deactivate(editor_scene, engine);
+        self.frozen = true;
+    }
+
+    fn unfreeze(&mut self) {
+        self.frozen = false;
     }
 }

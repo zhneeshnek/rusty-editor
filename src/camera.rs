@@ -168,7 +168,7 @@ impl CameraController {
         }
     }
 
-    pub fn on_key_down(&mut self, key: KeyCode, modifiers: &KeyboardModifiers) {
+    pub fn on_key_down(&mut self, key: KeyCode) {
         match key {
             KeyCode::W => self.move_forward = true,
             KeyCode::S => self.move_backward = true,
