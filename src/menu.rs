@@ -24,7 +24,7 @@ use rg3d::{
         menu::{MenuBuilder, MenuItemBuilder, MenuItemContent},
         message::{
             FileSelectorMessage, MenuItemMessage, MessageBoxMessage, MessageDirection,
-            UiMessageData, WidgetMessage, WindowMessage, KeyCode,
+            UiMessageData, WidgetMessage, WindowMessage, KeyCode, MenuMessage,
         },
         messagebox::{MessageBoxBuilder, MessageBoxButtons, MessageBoxResult},
         widget::WidgetBuilder,
