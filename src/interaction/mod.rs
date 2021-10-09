@@ -64,6 +64,10 @@ pub trait InteractionModeTrait {
 
     fn deactivate(&mut self, editor_scene: &EditorScene, engine: &mut GameEngine);
 
+    fn freeze(&mut self, editor_scene: &EditorScene, engine: &mut GameEngine);
+
+    fn unfreeze(&mut self);
+
     fn on_key_down(
         &mut self,
         _key: KeyCode,
@@ -128,7 +132,18 @@ macro_rules! static_dispatch {
             InteractionMode::Navmesh(v) => v.$func($($args),*),
             InteractionMode::Terrain(v) => v.$func($($args),*),
         }
-    }
+    };
+    // invoke macro with only self, and function identifier
+    ($self:ident, $func:ident) => {
+        match $self {
+            InteractionMode::Select(v) => v.$func(),
+            InteractionMode::Move(v) => v.$func(),
+            InteractionMode::Scale(v) => v.$func(),
+            InteractionMode::Rotate(v) => v.$func(),
+            InteractionMode::Navmesh(v) => v.$func(),
+            InteractionMode::Terrain(v) => v.$func(),
+        }
+    };
 }
 
 impl InteractionModeTrait for InteractionMode {
@@ -210,6 +225,18 @@ impl InteractionModeTrait for InteractionMode {
         scope_profile!();
 
         static_dispatch!(self, deactivate, editor_scene, engine)
+    }
+
+    fn freeze(&mut self, editor_scene: &EditorScene, engine: &mut GameEngine) {
+        scope_profile!();
+
+        static_dispatch!(self, freeze, editor_scene, engine)
+    }
+
+    fn unfreeze(&mut self) {
+        scope_profile!();
+
+        static_dispatch!(self, unfreeze)
     }
 
     fn on_key_down(

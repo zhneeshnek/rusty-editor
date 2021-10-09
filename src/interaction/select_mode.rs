@@ -17,6 +17,7 @@ pub struct SelectInteractionMode {
     message_sender: Sender<Message>,
     stack: Vec<Handle<Node>>,
     click_pos: Vector2<f32>,
+    frozen: bool,
 }
 
 impl SelectInteractionMode {
@@ -31,6 +32,7 @@ impl SelectInteractionMode {
             message_sender,
             stack: Vec::new(),
             click_pos: Vector2::default(),
+            frozen: false,
         }
     }
 }
@@ -189,5 +191,22 @@ impl InteractionModeTrait for SelectInteractionMode {
     ) {
     }
 
-    fn deactivate(&mut self, _editor_scene: &EditorScene, _engine: &mut GameEngine) {}
+    fn deactivate(&mut self, _editor_scene: &EditorScene, engine: &mut GameEngine) {
+        engine
+            .user_interface
+            .send_message(WidgetMessage::visibility(
+                self.selection_frame,
+                MessageDirection::ToWidget,
+                false,
+            ));
+    }
+
+    fn freeze(&mut self, editor_scene: &EditorScene, engine: &mut GameEngine) {
+        self.deactivate(editor_scene, engine);
+        self.frozen = true;
+    }
+
+    fn unfreeze(&mut self) {
+        self.frozen = false;
+    }
 }

@@ -1,10 +1,12 @@
+use crate::world::physics::selection::{JointSelection, RigidBodySelection};
 use crate::{
     camera::CameraController,
     interaction::navmesh::{data_model::Navmesh, selection::NavmeshSelection},
     physics::Physics,
     scene::clipboard::Clipboard,
-    sound::SoundSelection,
-    utils, GameEngine,
+    utils,
+    world::sound::SoundSelection,
+    GameEngine,
 };
 use rg3d::{
     core::{
@@ -158,6 +160,8 @@ pub enum Selection {
     Graph(GraphSelection),
     Navmesh(NavmeshSelection),
     Sound(SoundSelection),
+    RigidBody(RigidBodySelection),
+    Joint(JointSelection),
 }
 
 impl Default for Selection {
@@ -173,6 +177,8 @@ impl Selection {
             Selection::Graph(graph) => graph.is_empty(),
             Selection::Navmesh(navmesh) => navmesh.is_empty(),
             Selection::Sound(sound) => sound.sources().is_empty(),
+            Selection::RigidBody(rb) => rb.bodies().is_empty(),
+            Selection::Joint(joint) => joint.joints().is_empty(),
         }
     }
 
@@ -182,6 +188,8 @@ impl Selection {
             Selection::Graph(graph) => graph.is_single_selection(),
             Selection::Navmesh(navmesh) => navmesh.is_single_selection(),
             Selection::Sound(sound) => sound.is_single_selection(),
+            Selection::RigidBody(rb) => rb.is_single_selection(),
+            Selection::Joint(joint) => joint.is_single_selection(),
         }
     }
 }

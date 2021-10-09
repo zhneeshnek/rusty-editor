@@ -364,6 +364,7 @@ pub struct EditNavmeshMode {
     message_sender: Sender<Message>,
     drag_context: Option<DragContext>,
     plane_kind: PlaneKind,
+    frozen: bool,
 }
 
 impl EditNavmeshMode {
@@ -378,6 +379,7 @@ impl EditNavmeshMode {
             message_sender,
             drag_context: None,
             plane_kind: PlaneKind::X,
+            frozen: false,
         }
     }
 }
@@ -605,6 +607,10 @@ impl InteractionModeTrait for EditNavmeshMode {
         camera: Handle<Node>,
         engine: &mut GameEngine,
     ) {
+        if self.frozen {
+            return;
+        }
+
         let scene = &mut engine.scenes[editor_scene.scene];
         self.move_gizmo.set_visible(&mut scene.graph, false);
 
@@ -709,6 +715,15 @@ impl InteractionModeTrait for EditNavmeshMode {
     fn deactivate(&mut self, editor_scene: &EditorScene, engine: &mut GameEngine) {
         let scene = &mut engine.scenes[editor_scene.scene];
         self.move_gizmo.set_visible(&mut scene.graph, false);
+    }
+
+    fn freeze(&mut self, editor_scene: &EditorScene, engine: &mut GameEngine) {
+        self.deactivate(editor_scene, engine);
+        self.frozen = true;
+    }
+
+    fn unfreeze(&mut self) {
+        self.frozen = false;
     }
 
     fn on_key_down(

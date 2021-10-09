@@ -24,7 +24,7 @@ use rg3d::{
         menu::{MenuBuilder, MenuItemBuilder, MenuItemContent},
         message::{
             FileSelectorMessage, MenuItemMessage, MessageBoxMessage, MessageDirection,
-            UiMessageData, WidgetMessage, WindowMessage, KeyCode,
+            UiMessageData, WidgetMessage, WindowMessage, KeyCode, MenuMessage,
         },
         messagebox::{MessageBoxBuilder, MessageBoxButtons, MessageBoxResult},
         widget::WidgetBuilder,
@@ -100,6 +100,7 @@ pub struct Menu {
     pub configurator: Configurator,
     pub path_fixer: PathFixer,
     pub restriction: MenuShortcutRestriction,
+    pub switch: MenuButtonSwitch,
     configure_message: Handle<UiNode>,
     log_panel: Handle<UiNode>,
     create: Handle<UiNode>,
@@ -128,12 +129,28 @@ pub struct MenuShortcutRestriction {
     triggers: std::collections::HashSet<Handle<UiNode>>, 
 }
 
+// Purpose: stores handles to certain menu buttons, which dependent on whether scene is active.
+pub struct MenuButtonSwitch {
+    pub on: bool,
+    // menu buttons affected by switch
+    buttons: std::collections::HashSet<Handle<UiNode>>,
+}
+
 pub struct MessageBoxes {
     new_scene: Handle<UiNode>,
     close_scene: Handle<UiNode>,
     load_scene: Handle<UiNode>,
     pub exit: Handle<UiNode>,
     pub validation: Handle<UiNode>,
+}
+
+struct MessageBoxParams<'a> {
+    width: f32,
+    height: f32,
+    position: Vector2<f32>,
+    title: &'a str,
+    text: &'a str,
+    buttons: MessageBoxButtons
 }
 
 fn switch_window_state(window: Handle<UiNode>, ui: &mut UserInterface, center: bool) {
@@ -170,76 +187,20 @@ fn make_load_file_selector(ctx: &mut BuildContext) -> Handle<UiNode> {
     .build(ctx)
 }
 
-    
-fn make_message_boxes(ctx: &mut BuildContext) -> MessageBoxes {
-    let new_scene = MessageBoxBuilder::new(
+fn make_message_box(ctx: &mut BuildContext, params: MessageBoxParams) -> Handle<UiNode> {
+    MessageBoxBuilder::new(
         WindowBuilder::new(
-            WidgetBuilder::new().with_width(300.0).with_height(100.0).with_desired_position(Vector2::new(-100.0, 100.0)))
+            WidgetBuilder::new().with_width(params.width).with_height(params.height).with_desired_position(params.position))
                 .can_close(false)
                 .can_minimize(false)
                 .open(false)   
-                .with_title(WindowTitle::Text("Unsaved changes".to_owned()))
+                .with_title(WindowTitle::Text(params.title.to_owned()))
         )
-        .with_text("There are unsaved changes. Do you wish to save them before starting new scene?")
-        .with_buttons(MessageBoxButtons::YesNoCancel)
-        .build(ctx);
-
-    let load_scene = MessageBoxBuilder::new(
-        WindowBuilder::new(
-            WidgetBuilder::new().with_width(300.0).with_height(100.0).with_desired_position(Vector2::new(-100.0, 100.0)))
-            .can_close(false)
-            .can_minimize(false)
-            .open(false)
-            .with_title(WindowTitle::Text("Unsaved changes".to_owned()))
-        )
-        .with_text("There are unsaved changes. Do you wish to save them before loading scene?")
-        .with_buttons(MessageBoxButtons::YesNoCancel)
-        .build(ctx);
-
-    let close_scene = MessageBoxBuilder::new(
-        WindowBuilder::new(
-            WidgetBuilder::new().with_width(300.0).with_height(100.0).with_desired_position(Vector2::new(-100.0, 100.0))
-        )
-            .can_close(false)
-            .can_minimize(false)
-            .open(false)
-            .with_title(WindowTitle::Text("Unsaved changes".to_owned()))
-        )
-        .with_text("There are unsaved changes. Do you wish to save them before closing scene?")
-        .with_buttons(MessageBoxButtons::YesNoCancel)
-        .build(ctx);
-
-    let exit = MessageBoxBuilder::new(
-        WindowBuilder::new(
-            WidgetBuilder::new().with_width(300.0).with_height(100.0))
-                .can_close(false)
-                .can_minimize(false)
-                .open(false)
-                .with_title(WindowTitle::Text("Unsaved changes".to_owned())),
-        )
-        .with_text("There are unsaved changes. Do you wish to save them before exit?")
-        .with_buttons(MessageBoxButtons::YesNoCancel)
-        .build(ctx);
-
-    let validation = MessageBoxBuilder::new(
-        WindowBuilder::new(
-            WidgetBuilder::new().with_width(400.0).with_height(500.0))
-                .can_close(false)
-                .can_minimize(false)
-                .open(false)
-                .with_title(WindowTitle::Text("Validation failed!".to_owned())),
-        )
-        .with_buttons(MessageBoxButtons::Ok)
-        .build(ctx);
-
-    MessageBoxes {
-        new_scene,
-        close_scene,
-        load_scene,
-        exit,
-        validation
-    }
+        .with_text(params.text)
+        .with_buttons(params.buttons)
+        .build(ctx)
 }
+
 
 impl Menu {
     pub fn new(
@@ -282,7 +243,6 @@ impl Menu {
         let create_sound_source;
         let create_spatial_sound_source;
         let open_path_fixer;
-        let message_boxes;
         let ctx = &mut engine.user_interface.build_ctx();
         let configure_message = MessageBoxBuilder::new(
             WindowBuilder::new(WidgetBuilder::new().with_width(250.0).with_height(150.0))
@@ -595,7 +555,51 @@ impl Menu {
 
         let load_file_selector = make_load_file_selector(ctx);
 
-        message_boxes = make_message_boxes(ctx); 
+        let message_boxes = MessageBoxes {
+            new_scene : make_message_box(ctx, MessageBoxParams {
+                buttons: MessageBoxButtons::YesNoCancel,
+                width: 290.0,
+                height: 120.0,
+                position: Vector2::new(0.0, 0.0),
+                title: "Are you sure?",
+                text: " Unsaved changes will be lost. Save before starting new scene?"
+            }),
+            close_scene : make_message_box(ctx, MessageBoxParams {
+                buttons: MessageBoxButtons::YesNoCancel,
+                width: 310.0,
+                height: 180.0,
+                position: Vector2::new(0.0, 0.0),
+                title: "Closing the current scene.",
+                text: " Do you want to save? Unsaved changes will be lost."
+            }),
+            load_scene : make_message_box(ctx, MessageBoxParams {
+                buttons: MessageBoxButtons::YesNoCancel,
+                width: 380.0,
+                height: 120.0,
+                position: Vector2::new(0.0, -310.0),
+                title: "Loading a new scene.",
+                text: " Unsaved changes to current scene will be lost. Do you want to save?"
+            }),
+            exit : make_message_box(ctx, MessageBoxParams {
+                buttons: MessageBoxButtons::YesNoCancel,
+                width: 380.0,
+                height: 120.0,
+                position: Vector2::new(0.0, 0.0),
+                title: "Closing editor.",
+                text: " Do you want to save changes to the scene before exiting?"
+            }),
+            validation : make_message_box(ctx, MessageBoxParams {
+                buttons: MessageBoxButtons::Ok,
+                width: 320.0,
+                height: 240.0,
+                position: Vector2::new(0.0, 200.0),
+                title: "Error!",
+                text: "
+                        Saving failed! /n
+                        Check the error log for more information.
+                    "
+            }),
+        };
 
         let path_fixer = PathFixer::new(ctx);
 
@@ -626,6 +630,14 @@ impl Menu {
         restriction.triggers.insert(configurator.window);
         restriction.triggers.insert(settings_window.window);
 
+        let mut switch = MenuButtonSwitch { on: false, buttons: std::collections::HashSet::new() };
+        
+        switch.buttons.insert(save);
+        switch.buttons.insert(save_as);
+        switch.buttons.insert(close_scene);
+        switch.buttons.insert(create);
+        switch.buttons.insert(edit);
+
         Self {
             menu,
             new_scene,
@@ -645,7 +657,8 @@ impl Menu {
             create_directional_light,
             exit,
             settings: settings_window,
-            restriction: restriction, 
+            restriction: restriction,
+            switch: switch,
             message_sender,
             save_file_selector,
             load_file_selector,
@@ -704,16 +717,8 @@ impl Menu {
 
     pub fn sync_to_model(&mut self, editor_scene: Option<&EditorScene>, ui: &mut UserInterface) {
         scope_profile!();
-
-        for &widget in [
-            self.close_scene,
-            self.save,
-            self.save_as,
-            self.create,
-            self.edit,
-        ]
-        .iter()
-        {
+        self.switch.on = editor_scene.is_some();
+        for &widget in self.switch.buttons.iter() {
             send_sync_message(
                 ui,
                 WidgetMessage::enabled(widget, MessageDirection::ToWidget, editor_scene.is_some()),
@@ -763,7 +768,7 @@ impl Menu {
                     if let Some(scene) = ctx.editor_scene {
                         scene.camera_controller.freeze();
                         if let Some(mode) = ctx.current_interaction_mode {
-//                          TODO: stop interaction mode
+                            mode.freeze(scene, ctx.engine);
                         }
                     }
                 }
@@ -774,7 +779,7 @@ impl Menu {
                     if let Some(scene) = ctx.editor_scene {
                         scene.camera_controller.freeze();
                         if let Some(mode) = ctx.current_interaction_mode {
-//                          TODO: stop interaction mode
+                            mode.freeze(scene, ctx.engine);
                         }
                     }
                 }
@@ -785,7 +790,7 @@ impl Menu {
                     if let Some(scene) = ctx.editor_scene {
                         scene.camera_controller.unfreeze();
                         if let Some(mode) = ctx.current_interaction_mode {
-//                          TODO: resume interaction mode
+                            mode.unfreeze();
                         }
                     }
                 }
@@ -1130,7 +1135,6 @@ impl Menu {
                             }
                         }
                         KeyCode::N => {
-                            println!("N pressed from menu!");
                             if ctx.engine.user_interface.keyboard_modifiers().control {
                                 if let Some(editor_scene) = ctx.editor_scene {
                                     self.open_new_scene_message_box(&mut ctx.engine.user_interface);
@@ -1153,9 +1157,8 @@ impl Menu {
                         KeyCode::S => {
                             if ctx.engine.user_interface.keyboard_modifiers().control &&  ctx.engine.user_interface.keyboard_modifiers().shift {   
                                 if let Some(editor_scene) = ctx.editor_scene {
+                                    self.open_save_file_selector(&mut ctx.engine.user_interface);
                                 }
-                                self.open_save_file_selector(&mut ctx.engine.user_interface);
-
                             } else if ctx.engine.user_interface.keyboard_modifiers().control {
                                 if let Some(editor_scene) = ctx.editor_scene {
                                     if let Some(scene_path) = editor_scene.path.as_ref()

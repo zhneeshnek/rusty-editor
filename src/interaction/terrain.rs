@@ -36,6 +36,7 @@ pub struct TerrainInteractionMode {
     interacting: bool,
     brush_gizmo: BrushGizmo,
     brush: Arc<Mutex<Brush>>,
+    frozen: bool,
 }
 
 impl TerrainInteractionMode {
@@ -52,6 +53,7 @@ impl TerrainInteractionMode {
             message_sender,
             brush,
             masks: Default::default(),
+            frozen: false,
         }
     }
 }
@@ -258,6 +260,10 @@ impl InteractionModeTrait for TerrainInteractionMode {
         _camera: Handle<Node>,
         engine: &mut GameEngine,
     ) {
+        if self.frozen {
+            return;
+        }
+
         let graph = &mut engine.scenes[editor_scene.scene].graph;
         self.brush_gizmo.set_visible(graph, true);
     }
@@ -265,5 +271,14 @@ impl InteractionModeTrait for TerrainInteractionMode {
     fn deactivate(&mut self, editor_scene: &EditorScene, engine: &mut GameEngine) {
         let graph = &mut engine.scenes[editor_scene.scene].graph;
         self.brush_gizmo.set_visible(graph, false);
+    }
+
+    fn freeze(&mut self, editor_scene: &EditorScene, engine: &mut GameEngine) {
+        self.deactivate(editor_scene, engine);
+        self.frozen = true;
+    }
+
+    fn unfreeze(&mut self) {
+        self.frozen = false;
     }
 }
