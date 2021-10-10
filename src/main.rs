@@ -65,13 +65,7 @@ use crate::{
     },
     settings::{Settings, SettingsSectionKind},
     sidebar::SideBar,
-<<<<<<< HEAD
-    world::graph::SceneGraphViewer,
-    world::sound::SoundPanel,
-=======
-    utils::path_fixer::PathFixer,
     world::graph::WorldViewer,
->>>>>>> master
 };
 use rg3d::{
     core::{
@@ -754,9 +748,8 @@ impl ScenePreview {
 pub enum SyncDestination {
     CommandStackViewer,
     Menu,
-    WorldOutliner,
+    WorldViewer,
     Sidebar,
-    SoundPanel,
     MaterialEditor,
     NavmeshPanel,
 }
@@ -1506,6 +1499,8 @@ impl Editor {
             )
         } else {
             self.world_viewer.clear(&mut engine.user_interface);
+            self.command_stack_viewer.clear(&mut engine.user_interface);
+            self.navmesh_panel.clear(&mut engine.user_interface);
         }
     }
 
@@ -1545,7 +1540,7 @@ impl Editor {
                         .unwrap();
                         self.message_sender
                             .send(Message::_SyncToModel { 
-                                destination: Some(SyncDestination::WorldOutliner)
+                                destination: Some(SyncDestination::WorldViewer)
                             })
                             .unwrap();
                         self.message_sender
@@ -1556,11 +1551,6 @@ impl Editor {
                         self.message_sender
                             .send(Message::_SyncToModel {
                                 destination: Some(SyncDestination::Sidebar)
-                            })
-                            .unwrap();
-                        self.message_sender
-                            .send(Message::_SyncToModel {
-                                destination: Some(SyncDestination::SoundPanel)
                             })
                             .unwrap();
                     }
@@ -1575,13 +1565,13 @@ impl Editor {
                         });
 
                         self.message_sender
-                        .send(Message::_SyncToModel { 
-                            destination: Some(SyncDestination::CommandStackViewer)
-                        })
+                            .send(Message::_SyncToModel { 
+                                destination: Some(SyncDestination::CommandStackViewer)
+                            })
                         .unwrap();
                         self.message_sender
                             .send(Message::_SyncToModel { 
-                                destination: Some(SyncDestination::WorldOutliner)
+                                destination: Some(SyncDestination::WorldViewer)
                             })
                             .unwrap();
                         self.message_sender
@@ -1594,12 +1584,7 @@ impl Editor {
                                 destination: Some(SyncDestination::Sidebar)
                             })
                             .unwrap();
-                        self.message_sender
-                            .send(Message::_SyncToModel {
-                                destination: Some(SyncDestination::SoundPanel)
-                            })
-                            .unwrap();
-                        }
+                    }
                 }
                 Message::RedoSceneCommand => {
                     if let Some(editor_scene) = self.scene.as_mut() {
@@ -1617,7 +1602,7 @@ impl Editor {
                         .unwrap();
                         self.message_sender
                             .send(Message::_SyncToModel { 
-                                destination: Some(SyncDestination::WorldOutliner)
+                                destination: Some(SyncDestination::WorldViewer)
                             })
                             .unwrap();
                         self.message_sender
@@ -1628,11 +1613,6 @@ impl Editor {
                         self.message_sender
                             .send(Message::_SyncToModel {
                                 destination: Some(SyncDestination::Sidebar)
-                            })
-                            .unwrap();
-                        self.message_sender
-                            .send(Message::_SyncToModel {
-                                destination: Some(SyncDestination::SoundPanel)
                             })
                             .unwrap();
                     }
@@ -1681,13 +1661,13 @@ impl Editor {
                                         },
                                         &mut engine.user_interface,
                                     );
+                                } else {
+                                    self.command_stack_viewer.clear(&mut engine.user_interface);
                                 }
                             },
-                            SyncDestination::WorldOutliner => {
+                            SyncDestination::WorldViewer => {
                                 if let Some(editor_scene) = self.scene.as_ref() {
-                                    self.world_outliner.sync_to_model(editor_scene, engine);
-                                } else {
-
+                                    self.world_viewer.sync_to_model(editor_scene, engine);
                                 }
                             },
                             SyncDestination::MaterialEditor => {
@@ -1698,21 +1678,12 @@ impl Editor {
                                 if let Some(editor_scene) = self.scene.as_ref() {
                                     self.navmesh_panel.sync_to_model(editor_scene, engine);
                                 } else {
-
+                                    self.navmesh_panel.clear(&mut engine.user_interface);
                                 }
                             },
                             SyncDestination::Sidebar => {
                                 if let Some(editor_scene) = self.scene.as_ref() {
                                     self.sidebar.sync_to_model(editor_scene, engine);
-                                } else {
-
-                                }
-                            },
-                            SyncDestination::SoundPanel => {
-                                if let Some(editor_scene) = self.scene.as_ref() {
-                                    self.sound_panel.sync_to_model(editor_scene, engine);
-                                } else {
-
                                 }
                             },
                         }

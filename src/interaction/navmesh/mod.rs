@@ -48,7 +48,7 @@ use rg3d::{
         text::TextBuilder,
         widget::WidgetBuilder,
         window::{WindowBuilder, WindowTitle},
-        Orientation, Thickness, VerticalAlignment,
+        Orientation, Thickness, VerticalAlignment, UserInterface,
     },
     scene::{camera::Camera, node::Node},
 };
@@ -244,6 +244,19 @@ impl NavmeshPanel {
             self.remove,
             MessageDirection::ToWidget,
             editor_scene.navmeshes.is_valid_handle(self.selected),
+        ));
+    }
+
+    pub fn clear(
+        &mut self,
+        ui: &mut UserInterface,
+    ) {
+        scope_profile!();
+
+        ui.send_message(ListViewMessage::items(
+            self.navmeshes,
+            MessageDirection::ToWidget,
+            vec![],
         ));
     }
 
