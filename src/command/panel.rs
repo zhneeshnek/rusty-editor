@@ -183,4 +183,17 @@ impl CommandStackViewer {
             ListViewMessage::items(self.list, MessageDirection::ToWidget, items),
         );
     }
+
+    pub fn clear(
+        &mut self,
+        ui: &mut UserInterface,
+    ) {
+        scope_profile!();
+
+        ui.send_message(ListViewMessage::items(
+            self.list,
+            MessageDirection::ToWidget,
+            vec![],
+        ));
+    }
 }

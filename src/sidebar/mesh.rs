@@ -8,7 +8,7 @@ use crate::{
         make_bool_input_field, make_int_input_field, make_section, make_text_mark, COLUMN_WIDTH,
         ROW_HEIGHT,
     },
-    Message,
+    Message, SyncDestination,
 };
 use rg3d::gui::dropdown_list::DropdownList;
 use rg3d::gui::message::UiMessage;
@@ -267,7 +267,7 @@ impl MeshSection {
                     } else if message.destination() == self.surfaces_list {
                         self.current_surface = selection;
 
-                        self.sender.send(Message::SyncToModel).unwrap();
+                        self.sender.send(Message::SyncToModel {destination: Some(SyncDestination::Sidebar)}).unwrap();
                     }
                 }
                 UiMessageData::Button(ButtonMessage::Click) => {

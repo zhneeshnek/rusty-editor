@@ -10,7 +10,7 @@ use crate::{
     },
     send_sync_message,
     sidebar::{make_text_mark, ROW_HEIGHT},
-    Message,
+    Message, SyncDestination,
 };
 use rg3d::gui::message::UiMessage;
 use rg3d::gui::numeric::NumericUpDownMessage;
@@ -522,7 +522,7 @@ impl LodGroupEditor {
         ));
 
         // Force-sync.
-        self.sender.send(Message::SyncToModel).unwrap();
+        self.sender.send(Message::SyncToModel {destination: Some(SyncDestination::Sidebar)}).unwrap();
     }
 
     pub fn handle_ui_message(
@@ -583,7 +583,7 @@ impl LodGroupEditor {
                     self.current_lod_level = *index;
                     self.selected_object = None;
                     // Force sync.
-                    self.sender.send(Message::SyncToModel).unwrap();
+                    self.sender.send(Message::SyncToModel {destination: Some(SyncDestination::Sidebar)}).unwrap();
 
                     ui.send_message(WidgetMessage::enabled(
                         self.remove_object,
@@ -599,7 +599,7 @@ impl LodGroupEditor {
                 } else if message.destination() == self.objects {
                     self.selected_object = *index;
                     // Force sync.
-                    self.sender.send(Message::SyncToModel).unwrap();
+                    self.sender.send(Message::SyncToModel {destination: Some(SyncDestination::Sidebar)}).unwrap();
 
                     ui.send_message(WidgetMessage::enabled(
                         self.remove_object,

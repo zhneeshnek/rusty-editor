@@ -25,7 +25,7 @@ use crate::{
 };
 use rg3d::gui::list_view::ListView;
 use rg3d::gui::message::UiMessage;
-use rg3d::gui::{BuildContext, UiNode};
+use rg3d::gui::{BuildContext, UiNode, UserInterface};
 use rg3d::{
     core::{
         algebra::{Vector2, Vector3},
@@ -244,6 +244,19 @@ impl NavmeshPanel {
             self.remove,
             MessageDirection::ToWidget,
             editor_scene.navmeshes.is_valid_handle(self.selected),
+        ));
+    }
+
+    pub fn clear(
+        &mut self,
+        ui: &mut UserInterface,
+    ) {
+        scope_profile!();
+
+        ui.send_message(ListViewMessage::items(
+            self.navmeshes,
+            MessageDirection::ToWidget,
+            vec![],
         ));
     }
 

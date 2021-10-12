@@ -11,7 +11,7 @@ use crate::{
         make_text_mark, make_vec3_input_field, particle::emitter::EmitterSection, COLUMN_WIDTH,
         ROW_HEIGHT,
     },
-    Message,
+    Message, SyncDestination,
 };
 use rg3d::gui::dropdown_list::DropdownList;
 use rg3d::gui::message::UiMessage;
@@ -406,7 +406,7 @@ impl ParticleSystemSection {
                 UiMessageData::DropdownList(DropdownListMessage::SelectionChanged(selection)) => {
                     if message.destination() == self.emitters {
                         self.emitter_index = *selection;
-                        self.sender.send(Message::SyncToModel).unwrap();
+                        self.sender.send(Message::SyncToModel {destination: Some(SyncDestination::Sidebar)}).unwrap();
                     }
                 }
                 _ => {}

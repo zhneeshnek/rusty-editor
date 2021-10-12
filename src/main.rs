@@ -747,13 +747,24 @@ impl ScenePreview {
 }
 
 #[derive(Debug)]
+pub enum SyncDestination {
+    CommandStackViewer,
+    Menu,
+    WorldViewer,
+    Sidebar,
+    MaterialEditor,
+    NavmeshPanel,
+}
+
+#[derive(Debug)]
 pub enum Message {
     DoSceneCommand(SceneCommand),
     UndoSceneCommand,
     RedoSceneCommand,
     ClearSceneCommandStack,
     SelectionChanged,
-    SyncToModel,
+    // sync certain ui components, rather than whole UI on every sync
+    SyncToModel { destination: Option<SyncDestination> },
     SaveScene(PathBuf),
     LoadScene(PathBuf),
     CloseScene,
@@ -1598,6 +1609,8 @@ impl Editor {
             )
         } else {
             self.world_viewer.clear(&mut engine.user_interface);
+            self.command_stack_viewer.clear(&mut engine.user_interface);
+            self.navmesh_panel.clear(&mut engine.user_interface);
         }
     }
 
@@ -1629,7 +1642,26 @@ impl Editor {
                                 resource_manager: engine.resource_manager.clone(),
                             },
                         );
-                        needs_sync = true;
+                        self.message_sender
+                        .send(Message::SyncToModel { 
+                            destination: Some(SyncDestination::CommandStackViewer)
+                        })
+                        .unwrap();
+                        self.message_sender
+                            .send(Message::SyncToModel { 
+                                destination: Some(SyncDestination::WorldViewer)
+                            })
+                            .unwrap();
+                        self.message_sender
+                            .send(Message::SyncToModel { 
+                                destination: Some(SyncDestination::NavmeshPanel)
+                            })
+                            .unwrap();
+                        self.message_sender
+                            .send(Message::SyncToModel {
+                                destination: Some(SyncDestination::Sidebar)
+                            })
+                            .unwrap();
                     }
                 }
                 Message::UndoSceneCommand => {
@@ -1640,7 +1672,26 @@ impl Editor {
                             editor_scene,
                             resource_manager: engine.resource_manager.clone(),
                         });
-                        needs_sync = true;
+                        self.message_sender
+                            .send(Message::SyncToModel { 
+                                destination: Some(SyncDestination::CommandStackViewer)
+                            })
+                        .unwrap();
+                        self.message_sender
+                            .send(Message::SyncToModel { 
+                                destination: Some(SyncDestination::WorldViewer)
+                            })
+                            .unwrap();
+                        self.message_sender
+                            .send(Message::SyncToModel { 
+                                destination: Some(SyncDestination::NavmeshPanel)
+                            })
+                            .unwrap();
+                        self.message_sender
+                            .send(Message::SyncToModel {
+                                destination: Some(SyncDestination::Sidebar)
+                            })
+                            .unwrap();
                     }
                 }
                 Message::RedoSceneCommand => {
@@ -1651,7 +1702,26 @@ impl Editor {
                             editor_scene,
                             resource_manager: engine.resource_manager.clone(),
                         });
-                        needs_sync = true;
+                        self.message_sender
+                            .send(Message::SyncToModel { 
+                                destination: Some(SyncDestination::CommandStackViewer)
+                            })
+                        .unwrap();
+                        self.message_sender
+                            .send(Message::SyncToModel { 
+                                destination: Some(SyncDestination::WorldViewer)
+                            })
+                            .unwrap();
+                        self.message_sender
+                            .send(Message::SyncToModel { 
+                                destination: Some(SyncDestination::NavmeshPanel)
+                            })
+                            .unwrap();
+                        self.message_sender
+                            .send(Message::SyncToModel {
+                                destination: Some(SyncDestination::Sidebar)
+                            })
+                            .unwrap();
                     }
                 }
                 Message::ClearSceneCommandStack => {
@@ -1662,14 +1732,66 @@ impl Editor {
                             editor_scene,
                             resource_manager: engine.resource_manager.clone(),
                         });
-                        needs_sync = true;
+                        self.message_sender
+                            .send(Message::SyncToModel {
+                                destination: Some(SyncDestination::CommandStackViewer)
+                            })
+                            .unwrap();
                     }
                 }
                 Message::SelectionChanged => {
                     self.world_viewer.sync_selection = true;
                 }
-                Message::SyncToModel => {
-                    needs_sync = true;
+                Message::SyncToModel { destination } => {
+                    if let Some(dest) = destination.as_ref() {
+                        match dest {
+                            SyncDestination::CommandStackViewer => {
+                                if let Some(editor_scene) = self.scene.as_mut() {
+                                    self.command_stack_viewer.sync_to_model(
+                                        &mut self.command_stack,
+                                        &SceneContext {
+                                            scene: &mut engine.scenes[editor_scene.scene],
+                                            message_sender: self.message_sender.clone(),
+                                            editor_scene,
+                                            resource_manager: engine.resource_manager.clone(),
+                                        },
+                                        &mut engine.user_interface,
+                                    );
+                                } else {
+                                    self.command_stack_viewer.clear(&mut engine.user_interface);
+                                }
+                            }
+                            SyncDestination::Menu => {
+                                self.menu
+                                    .sync_to_model(self.scene.as_ref(), &mut engine.user_interface);
+                            }
+                            SyncDestination::WorldViewer => {
+                                if let Some(editor_scene) = self.scene.as_ref() {
+                                    self.world_viewer.sync_to_model(editor_scene, engine);
+                                } else {
+                                    self.world_viewer.clear(&mut engine.user_interface);
+                                }
+                            }
+                            SyncDestination::Sidebar => {
+                                if let Some(editor_scene) = self.scene.as_ref() {
+                                    self.sidebar.sync_to_model(editor_scene, engine);
+                                }
+                            }
+                            SyncDestination::NavmeshPanel => {
+                                if let Some(editor_scene) = self.scene.as_ref() {
+                                    self.navmesh_panel.sync_to_model(editor_scene, engine);
+                                } else {
+                                    self.navmesh_panel.clear(&mut engine.user_interface);
+                                }
+                            }
+                            SyncDestination::MaterialEditor => {
+                                self.material_editor
+                                    .sync_to_model(&mut engine.user_interface);
+                            }
+                        }
+                    } else {
+                        self.sync_to_model(engine);
+                    }
                 }
                 Message::SaveScene(path) => {
                     if let Some(editor_scene) = self.scene.as_mut() {
@@ -1743,7 +1865,13 @@ impl Editor {
                 Message::CloseScene => {
                     if let Some(editor_scene) = self.scene.take() {
                         engine.scenes.remove(editor_scene.scene);
-                        needs_sync = true;
+
+                        // sync all components
+                        self.message_sender
+                            .send(Message::SyncToModel {
+                                destination: None,
+                            })
+                            .unwrap();
 
                         // Preview frame has scene frame texture assigned, it must be cleared explicitly,
                         // otherwise it will show last rendered frame in preview which is not what we want.
@@ -1790,7 +1918,11 @@ impl Editor {
                         )))
                         .unwrap();
 
-                    needs_sync = true;
+                    self.message_sender
+                        .send(Message::SyncToModel { 
+                            destination: Some(SyncDestination::Menu) 
+                        })
+                        .unwrap();
                 }
                 Message::OpenSettings(section) => {
                     self.menu
@@ -1810,10 +1942,6 @@ impl Editor {
                     self.asset_browser.locate_path(&engine.user_interface, path);
                 }
             }
-        }
-
-        if needs_sync {
-            self.sync_to_model(engine);
         }
 
         if let Some(editor_scene) = self.scene.as_mut() {
