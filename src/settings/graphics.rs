@@ -8,6 +8,7 @@ use rg3d::gui::numeric::NumericUpDownMessage;
 use rg3d::gui::{BuildContext, UiNode, UserInterface};
 use rg3d::{
     core::pool::Handle,
+    core::algebra::Vector4,
     gui::{
         color::ColorFieldBuilder,
         grid::{Column, GridBuilder, Row},
@@ -23,6 +24,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Deserialize, Serialize, PartialEq, Clone)]
 pub struct GraphicsSettings {
     pub quality: QualitySettings,
+    pub ambient_color: Vector4<f32>,
     pub z_near: f32,
     pub z_far: f32,
 }
@@ -31,6 +33,7 @@ impl Default for GraphicsSettings {
     fn default() -> Self {
         Self {
             quality: Default::default(),
+            ambient_color: Vector4::default(),
             z_near: 0.025,
             z_far: 128.0,
         }
@@ -182,7 +185,7 @@ impl GraphicsSection {
     pub fn handle_message(
         &mut self,
         message: &UiMessage,
-        editor_scene: &EditorScene,
+        editor_scene: Option<&EditorScene>,
         engine: &mut GameEngine,
         settings: &mut GraphicsSettings,
     ) {
@@ -207,7 +210,15 @@ impl GraphicsSection {
                 // TODO: Should not be here!
                 if message.destination() == self.ambient_color {
                     if let ColorFieldMessage::Color(color) = *msg {
-                        engine.scenes[editor_scene.scene].ambient_lighting_color = color;
+                        if let Some(scene) = editor_scene {
+                            settings.ambient_color =
+                                Vector4::new(color.r as f32, color.g as f32, color.b as f32, color.a as f32);
+                            engine.scenes[scene.scene].ambient_lighting_color = color;
+                        } else {
+                            // save to settings so it can be retrieved when a scene becomes active.
+                            settings.ambient_color = 
+                                Vector4::new(color.r as f32, color.g as f32, color.b as f32, color.a as f32);
+                        }
                     }
                 }
             }

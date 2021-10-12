@@ -559,9 +559,13 @@ impl Menu {
     pub fn handle_ui_message(&mut self, message: &UiMessage, ctx: MenuContext) {
         scope_profile!();
 
+        // borrow, else it becomes unavailable further into the function
         if let Some(scene) = ctx.editor_scene.as_ref() {
             self.settings
-                .handle_message(message, scene, ctx.engine, ctx.settings);
+                .handle_message(message, Some(scene), ctx.engine, ctx.settings);
+        } else {
+            self.settings
+                .handle_message(message, None, ctx.engine, ctx.settings);
         }
 
         match message.data() {

@@ -316,7 +316,7 @@ impl SettingsWindow {
         settings: &Settings,
         section: Option<SettingsSectionKind>,
     ) {
-        ui.send_message(WindowMessage::open(
+        ui.send_message(WindowMessage::open_modal(
             self.window,
             MessageDirection::ToWidget,
             true,
@@ -348,7 +348,7 @@ impl SettingsWindow {
     pub fn handle_message(
         &mut self,
         message: &UiMessage,
-        editor_scene: &EditorScene,
+        editor_scene: Option<&EditorScene>,
         engine: &mut GameEngine,
         settings: &mut Settings,
     ) {
@@ -384,7 +384,7 @@ impl SettingsWindow {
                                 entry.section,
                                 MessageDirection::ToWidget,
                                 entry.tree_item == selected,
-                            ))
+                            ));
                     }
                 }
             }
