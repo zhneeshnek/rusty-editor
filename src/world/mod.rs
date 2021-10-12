@@ -5,7 +5,7 @@ use crate::{
     scene::{
         commands::{
             graph::LinkNodesCommand, physics::LinkBodyCommand, physics::UnlinkBodyCommand,
-            ChangeSelectionCommand,
+            ChangeSelectionCommand, CommandGroup, SceneCommand,
         },
         EditorScene, Selection,
     },
@@ -18,7 +18,6 @@ use crate::{
         },
         link::{menu::LinkContextMenu, LinkItem, LinkItemBuilder},
         physics::{
-            fetch_name,
             item::{PhysicsItem, PhysicsItemBuilder, PhysicsItemMessage},
             selection::{JointSelection, RigidBodySelection},
         },
@@ -29,6 +28,7 @@ use crate::{
     },
     GameEngine, Message,
 };
+use rg3d::sound::source::SoundSource;
 use rg3d::{
     core::{
         color::Color,
@@ -86,6 +86,9 @@ pub struct WorldViewer {
     item_context_menu: ItemContextMenu,
     link_context_menu: LinkContextMenu,
     node_to_view_map: HashMap<Handle<Node>, Handle<UiNode>>,
+    rigid_body_to_view_map: HashMap<Handle<RigidBody>, Handle<UiNode>>,
+    joint_to_view_map: HashMap<Handle<Joint>, Handle<UiNode>>,
+    sound_to_view_map: HashMap<Handle<SoundSource>, Handle<UiNode>>,
 }
 
 fn make_graph_node_item(
@@ -160,6 +163,7 @@ pub fn sync_pool<T, N, M, F, V>(
     ui: &mut UserInterface,
     selection: Option<&[Handle<T>]>,
     _: PhantomData<V>,
+    view_map: &mut HashMap<Handle<T>, Handle<UiNode>>,
     mut make_view: M,
     mut make_name: N,
     mut fetch_entity: F,
@@ -188,6 +192,10 @@ where
                 let associated_source = (fetch_entity)(item, ui);
 
                 if pool.pair_iter().all(|(h, _)| h != associated_source) {
+                    let removed = view_map.remove(&associated_source);
+
+                    assert!(removed.is_some());
+
                     send_sync_message(
                         ui,
                         TreeMessage::remove_item(folder, MessageDirection::ToWidget, item),
@@ -202,10 +210,15 @@ where
                     .iter()
                     .all(|i| (fetch_entity)(*i, ui) != handle)
                 {
-                    let item = (make_view)(ui, handle, elem);
+                    let view = (make_view)(ui, handle, elem);
+
+                    let previous = view_map.insert(handle, view);
+
+                    assert!(previous.is_none());
+
                     send_sync_message(
                         ui,
-                        TreeMessage::add_item(folder, MessageDirection::ToWidget, item),
+                        TreeMessage::add_item(folder, MessageDirection::ToWidget, view),
                     );
                 }
             }
@@ -368,6 +381,9 @@ impl WorldViewer {
             sounds_folder,
             link_context_menu,
             node_to_view_map: Default::default(),
+            rigid_body_to_view_map: Default::default(),
+            joint_to_view_map: Default::default(),
+            sound_to_view_map: Default::default(),
         }
     }
 
@@ -386,7 +402,7 @@ impl WorldViewer {
             graph,
             engine.resource_manager.clone(),
         ));
-        selected_items.extend(self.sync_rigid_bodies(ui, editor_scene, graph));
+        selected_items.extend(self.sync_rigid_bodies(ui, editor_scene));
         selected_items.extend(self.sync_joints(ui, editor_scene));
         selected_items.extend(self.sync_sounds(ui, editor_scene, scene.sound_context.clone()));
 
@@ -475,11 +491,7 @@ impl WorldViewer {
                             .unwrap_or_default()
                     });
                     assert!(view.is_some());
-                    self.build_breadcrumb(
-                        &fetch_name(first_selected, editor_scene, &scene.graph),
-                        view,
-                        ui,
-                    );
+                    self.build_breadcrumb("Rigid Body", view, ui);
                 }
             }
             Selection::Joint(selection) => {
@@ -515,6 +527,7 @@ impl WorldViewer {
                 None
             },
             PhantomData::<SoundItem>,
+            &mut self.sound_to_view_map,
             |ui, handle, _| {
                 SoundItemBuilder::new(TreeBuilder::new(WidgetBuilder::new()))
                     .with_name(ctx.source(handle).name_owned())
@@ -540,7 +553,8 @@ impl WorldViewer {
             } else {
                 None
             },
-            PhantomData::<PhysicsItem<RigidBody>>,
+            PhantomData::<PhysicsItem<Joint>>,
+            &mut self.joint_to_view_map,
             |ui, handle, _| {
                 PhysicsItemBuilder::<Joint>::new(TreeBuilder::new(WidgetBuilder::new()))
                     .with_name("Joint".to_owned())
@@ -561,7 +575,6 @@ impl WorldViewer {
         &mut self,
         ui: &mut UserInterface,
         editor_scene: &EditorScene,
-        graph: &Graph,
     ) -> Vec<Handle<UiNode>> {
         sync_pool(
             self.rigid_bodies_folder,
@@ -573,13 +586,14 @@ impl WorldViewer {
                 None
             },
             PhantomData::<PhysicsItem<RigidBody>>,
+            &mut self.rigid_body_to_view_map,
             |ui, handle, _| {
                 PhysicsItemBuilder::<RigidBody>::new(TreeBuilder::new(WidgetBuilder::new()))
-                    .with_name(fetch_name(handle, editor_scene, graph))
+                    .with_name("Rigid Body".to_owned())
                     .with_physics_entity(handle)
                     .build(&mut ui.build_ctx())
             },
-            |b| fetch_name(b, editor_scene, graph),
+            |_| "Rigid Body".to_owned(),
             |s, ui| {
                 ui.node(s)
                     .cast::<PhysicsItem<RigidBody>>()
@@ -748,7 +762,7 @@ impl WorldViewer {
         selected_items
     }
 
-    pub fn sync_links(&mut self, editor_scene: &EditorScene, engine: &mut Engine) {
+    fn sync_node_rigid_body_links(&mut self, editor_scene: &EditorScene, engine: &mut Engine) {
         let ui = &mut engine.user_interface;
 
         for (&node, &view) in self.node_to_view_map.iter() {
@@ -796,6 +810,59 @@ impl WorldViewer {
         }
     }
 
+    fn sync_rigid_body_node_links(&mut self, editor_scene: &EditorScene, engine: &mut Engine) {
+        let ui = &mut engine.user_interface;
+
+        for (&rigid_body, &view) in self.rigid_body_to_view_map.iter() {
+            let rigid_body_view_ref = ui
+                .node(view)
+                .cast::<PhysicsItem<RigidBody>>()
+                .expect("Must be PhysicsItem<RigidBody>");
+
+            let node_links = rigid_body_view_ref
+                .tree
+                .items()
+                .iter()
+                .cloned()
+                .filter(|i| ui.node(*i).cast::<LinkItem<Node, RigidBody>>().is_some())
+                .collect::<Vec<_>>();
+
+            let linked_node = editor_scene.physics.binder.backward_map().get(&rigid_body);
+
+            if node_links.is_empty() {
+                if let Some(linked_node) = linked_node {
+                    let link = LinkItemBuilder::<Node, RigidBody>::new(TreeBuilder::new(
+                        WidgetBuilder::new().with_context_menu(self.link_context_menu.menu),
+                    ))
+                    .with_name("Linked Node")
+                    .with_source(*linked_node)
+                    .with_dest(rigid_body)
+                    .build(&mut ui.build_ctx());
+
+                    ui.send_message(TreeMessage::add_item(
+                        view,
+                        MessageDirection::ToWidget,
+                        link,
+                    ));
+                }
+            } else if linked_node.is_none() {
+                assert_eq!(node_links.len(), 1);
+
+                // Remove link.
+                ui.send_message(TreeMessage::remove_item(
+                    view,
+                    MessageDirection::ToWidget,
+                    node_links[0],
+                ));
+            }
+        }
+    }
+
+    fn sync_links(&mut self, editor_scene: &EditorScene, engine: &mut Engine) {
+        self.sync_node_rigid_body_links(editor_scene, engine);
+        self.sync_rigid_body_node_links(editor_scene, engine);
+    }
+
     pub fn colorize(&mut self, ui: &UserInterface) {
         let mut index = 0;
         colorize(self.tree_root, ui, &mut index);
@@ -819,73 +886,7 @@ impl WorldViewer {
                     && message.direction() == MessageDirection::FromWidget
                 {
                     if let TreeRootMessage::Selected(selection) = msg {
-                        let mut new_selection = Selection::None;
-                        for selected_item in selection {
-                            let selected_item_ref = engine.user_interface.node(*selected_item);
-
-                            if let Some(graph_node) = selected_item_ref.cast::<GraphNodeItem>() {
-                                match new_selection {
-                                    Selection::None => {
-                                        new_selection = Selection::Graph(
-                                            GraphSelection::single_or_empty(graph_node.node),
-                                        );
-                                    }
-                                    Selection::Graph(ref mut selection) => {
-                                        selection.insert_or_exclude(graph_node.node)
-                                    }
-                                    _ => (),
-                                }
-                            } else if let Some(rigid_body) =
-                                selected_item_ref.cast::<PhysicsItem<RigidBody>>()
-                            {
-                                match new_selection {
-                                    Selection::None => {
-                                        new_selection = Selection::RigidBody(RigidBodySelection {
-                                            bodies: vec![rigid_body.physics_entity],
-                                        });
-                                    }
-                                    Selection::RigidBody(ref mut selection) => {
-                                        selection.bodies.push(rigid_body.physics_entity)
-                                    }
-                                    _ => (),
-                                }
-                            } else if let Some(joint) =
-                                selected_item_ref.cast::<PhysicsItem<Joint>>()
-                            {
-                                match new_selection {
-                                    Selection::None => {
-                                        new_selection = Selection::Joint(JointSelection {
-                                            joints: vec![joint.physics_entity],
-                                        });
-                                    }
-                                    Selection::Joint(ref mut selection) => {
-                                        selection.joints.push(joint.physics_entity)
-                                    }
-                                    _ => (),
-                                }
-                            } else if let Some(sound) = selected_item_ref.cast::<SoundItem>() {
-                                match new_selection {
-                                    Selection::None => {
-                                        new_selection = Selection::Sound(SoundSelection {
-                                            sources: vec![sound.sound_source],
-                                        });
-                                    }
-                                    Selection::Sound(ref mut selection) => {
-                                        selection.sources.push(sound.sound_source)
-                                    }
-                                    _ => (),
-                                }
-                            }
-                        }
-
-                        if new_selection != editor_scene.selection {
-                            self.sender
-                                .send(Message::do_scene_command(ChangeSelectionCommand::new(
-                                    new_selection,
-                                    editor_scene.selection.clone(),
-                                )))
-                                .unwrap();
-                        }
+                        self.handle_selection(selection, editor_scene, engine);
                     }
                 }
             }
@@ -952,6 +953,78 @@ impl WorldViewer {
         }
     }
 
+    fn handle_selection(
+        &self,
+        selection: &[Handle<UiNode>],
+        editor_scene: &EditorScene,
+        engine: &Engine,
+    ) {
+        let mut new_selection = Selection::None;
+        for selected_item in selection {
+            let selected_item_ref = engine.user_interface.node(*selected_item);
+
+            if let Some(graph_node) = selected_item_ref.cast::<GraphNodeItem>() {
+                match new_selection {
+                    Selection::None => {
+                        new_selection =
+                            Selection::Graph(GraphSelection::single_or_empty(graph_node.node));
+                    }
+                    Selection::Graph(ref mut selection) => {
+                        selection.insert_or_exclude(graph_node.node)
+                    }
+                    _ => (),
+                }
+            } else if let Some(rigid_body) = selected_item_ref.cast::<PhysicsItem<RigidBody>>() {
+                match new_selection {
+                    Selection::None => {
+                        new_selection = Selection::RigidBody(RigidBodySelection {
+                            bodies: vec![rigid_body.physics_entity],
+                        });
+                    }
+                    Selection::RigidBody(ref mut selection) => {
+                        selection.bodies.push(rigid_body.physics_entity)
+                    }
+                    _ => (),
+                }
+            } else if let Some(joint) = selected_item_ref.cast::<PhysicsItem<Joint>>() {
+                match new_selection {
+                    Selection::None => {
+                        new_selection = Selection::Joint(JointSelection {
+                            joints: vec![joint.physics_entity],
+                        });
+                    }
+                    Selection::Joint(ref mut selection) => {
+                        selection.joints.push(joint.physics_entity)
+                    }
+                    _ => (),
+                }
+            } else if let Some(sound) = selected_item_ref.cast::<SoundItem>() {
+                match new_selection {
+                    Selection::None => {
+                        new_selection = Selection::Sound(SoundSelection {
+                            sources: vec![sound.sound_source],
+                        });
+                    }
+                    Selection::Sound(ref mut selection) => {
+                        selection.sources.push(sound.sound_source)
+                    }
+                    _ => (),
+                }
+            } else {
+                return;
+            }
+        }
+
+        if new_selection != editor_scene.selection {
+            self.sender
+                .send(Message::do_scene_command(ChangeSelectionCommand::new(
+                    new_selection,
+                    editor_scene.selection.clone(),
+                )))
+                .unwrap();
+        }
+    }
+
     fn handle_unlink(&self, ui: &UserInterface) {
         assert!(self.link_context_menu.target.is_some());
 
@@ -963,6 +1036,16 @@ impl WorldViewer {
                 .send(Message::do_scene_command(UnlinkBodyCommand {
                     node: rigid_body_link.dest,
                     handle: rigid_body_link.source,
+                }))
+                .unwrap();
+        } else if let Some(node_link) = ui
+            .node(self.link_context_menu.target)
+            .cast::<LinkItem<Node, RigidBody>>()
+        {
+            self.sender
+                .send(Message::do_scene_command(UnlinkBodyCommand {
+                    node: node_link.source,
+                    handle: node_link.dest,
                 }))
                 .unwrap();
         }
@@ -1020,11 +1103,24 @@ impl WorldViewer {
                     .any(|(n, b)| node.node == *n && rigid_body.physics_entity == *b);
 
                 if !already_linked {
-                    self.sender
-                        .send(Message::do_scene_command(LinkBodyCommand {
+                    let mut group = Vec::new();
+
+                    if let Some(linked_body) =
+                        editor_scene.physics.binder.forward_map().get(&node.node)
+                    {
+                        group.push(SceneCommand::new(UnlinkBodyCommand {
                             node: node.node,
-                            handle: rigid_body.physics_entity,
-                        }))
+                            handle: *linked_body,
+                        }));
+                    }
+
+                    group.push(SceneCommand::new(LinkBodyCommand {
+                        node: node.node,
+                        handle: rigid_body.physics_entity,
+                    }));
+
+                    self.sender
+                        .send(Message::do_scene_command(CommandGroup::from(group)))
                         .unwrap();
                 }
             }
@@ -1087,6 +1183,11 @@ impl WorldViewer {
     }
 
     pub fn clear(&mut self, ui: &mut UserInterface) {
+        self.node_to_view_map.clear();
+        self.rigid_body_to_view_map.clear();
+        self.joint_to_view_map.clear();
+        self.sound_to_view_map.clear();
+
         for folder in [
             self.graph_folder,
             self.rigid_bodies_folder,
