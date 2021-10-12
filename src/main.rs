@@ -1054,12 +1054,6 @@ impl Editor {
         // it has a physical body.
         scene.physics_binder.enabled = false;
 
-        if self.settings.graphics.ambient_color == Vector4::default() {
-            scene.ambient_lighting_color = Color::opaque(200, 200, 200);
-        } else {
-            scene.ambient_lighting_color = Color::from(self.settings.graphics.ambient_color);
-        }
-
         scene.render_target = Some(Texture::new_render_target(0, 0));
         engine.user_interface.send_message(ImageMessage::texture(
             self.preview.frame,
@@ -1762,6 +1756,8 @@ impl Editor {
                 }
                 Message::NewScene => {
                     let mut scene = Scene::new();
+
+                    scene.ambient_lighting_color = Color::from(self.settings.graphics.ambient_color);
 
                     self.set_scene(engine, scene, None);
                 }

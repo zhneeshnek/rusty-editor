@@ -8,6 +8,7 @@ use rg3d::gui::numeric::NumericUpDownMessage;
 use rg3d::gui::{BuildContext, UiNode, UserInterface};
 use rg3d::{
     core::pool::Handle,
+    core::color::Color,
     core::algebra::Vector4,
     gui::{
         color::ColorFieldBuilder,
@@ -33,7 +34,7 @@ impl Default for GraphicsSettings {
     fn default() -> Self {
         Self {
             quality: Default::default(),
-            ambient_color: Vector4::default(),
+            ambient_color: Color::opaque(200, 200, 200).as_frgba(),
             z_near: 0.025,
             z_far: 128.0,
         }
@@ -211,14 +212,9 @@ impl GraphicsSection {
                 if message.destination() == self.ambient_color {
                     if let ColorFieldMessage::Color(color) = *msg {
                         if let Some(scene) = editor_scene {
-                            settings.ambient_color =
-                                Vector4::new(color.r as f32, color.g as f32, color.b as f32, color.a as f32);
                             engine.scenes[scene.scene].ambient_lighting_color = color;
-                        } else {
-                            // save to settings so it can be retrieved when a scene becomes active.
-                            settings.ambient_color = 
-                                Vector4::new(color.r as f32, color.g as f32, color.b as f32, color.a as f32);
                         }
+                        settings.ambient_color = color.as_frgba();
                     }
                 }
             }
