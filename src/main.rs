@@ -16,6 +16,7 @@ pub mod camera;
 pub mod command;
 pub mod configurator;
 pub mod gui;
+pub mod inspector;
 pub mod interaction;
 pub mod light;
 pub mod log;
@@ -27,10 +28,11 @@ pub mod preview;
 pub mod project_dirs;
 pub mod scene;
 pub mod settings;
-pub mod sidebar;
 pub mod utils;
 pub mod world;
 
+use crate::inspector::Inspector;
+use crate::menu::Panels;
 use crate::{
     asset::{AssetBrowser, AssetItem, AssetKind},
     camera::CameraController,
@@ -47,7 +49,7 @@ use crate::{
         scale_mode::ScaleInteractionMode,
         select_mode::SelectInteractionMode,
         terrain::TerrainInteractionMode,
-        InteractionMode, InteractionModeKind, InteractionModeTrait,
+        InteractionMode, InteractionModeKind,
     },
     light::LightPanel,
     log::Log,
@@ -65,10 +67,10 @@ use crate::{
         EditorScene, Selection,
     },
     settings::{Settings, SettingsSectionKind},
-    sidebar::SideBar,
     utils::path_fixer::PathFixer,
     world::WorldViewer,
 };
+use rg3d::gui::formatted_text::WrapMode;
 use rg3d::{
     core::{
         algebra::{Point3, Vector2},
@@ -503,9 +505,73 @@ impl ModelImportDialog {
     }
 }
 
+fn make_interaction_mode_button(
+    ctx: &mut BuildContext,
+    image: &[u8],
+    tooltip: &str,
+) -> Handle<UiNode> {
+    ButtonBuilder::new(
+        WidgetBuilder::new()
+            .with_tooltip(
+                BorderBuilder::new(
+                    WidgetBuilder::new()
+                        .with_max_size(Vector2::new(300.0, f32::MAX))
+                        .with_child(
+                            TextBuilder::new(
+                                WidgetBuilder::new().with_margin(Thickness::uniform(2.0)),
+                            )
+                            .with_wrap(WrapMode::Word)
+                            .with_text(tooltip)
+                            .build(ctx),
+                        ),
+                )
+                .build(ctx),
+            )
+            .with_margin(Thickness::uniform(1.0)),
+    )
+    .with_content(
+        ImageBuilder::new(
+            WidgetBuilder::new()
+                .with_margin(Thickness::uniform(1.0))
+                .with_width(32.0)
+                .with_height(32.0),
+        )
+        .with_opt_texture(load_image(image))
+        .build(ctx),
+    )
+    .build(ctx)
+}
+
 impl ScenePreview {
     pub fn new(engine: &mut GameEngine, sender: Sender<Message>) -> Self {
         let ctx = &mut engine.user_interface.build_ctx();
+
+        let select_mode_tooltip = "Select Object(s) - Shortcut: [1]\n\nSelection interaction mode \
+        allows you to select an object by a single left mouse button click or multiple objects using either \
+        frame selection (click and drag) or by holding Ctrl+Click";
+
+        let move_mode_tooltip =
+            "Move Object(s) - Shortcut: [2]\n\nMovement interaction mode allows you to move selected \
+        objects. Keep in mind that movement always works in local coordinates!\n\n\
+        This also allows you to select an object or add an object to current selection using Ctrl+Click";
+
+        let rotate_mode_tooltip =
+            "Rotate Object(s) - Shortcut: [3]\n\nRotation interaction mode allows you to rotate selected \
+        objects. Keep in mind that rotation always works in local coordinates!\n\n\
+        This also allows you to select an object or add an object to current selection using Ctrl+Click";
+
+        let scale_mode_tooltip =
+            "Rotate Object(s) - Shortcut: [4]\n\nScaling interaction mode allows you to scale selected \
+        objects. Keep in mind that scaling always works in local coordinates!\n\n\
+        This also allows you to select an object or add an object to current selection using Ctrl+Click";
+
+        let navmesh_mode_tooltip =
+            "Edit Navmesh\n\nNavmesh edit mode allows you to modify selected \
+        navigational mesh.";
+
+        let terrain_mode_tooltip =
+            "Edit Terrain\n\nTerrain edit mode allows you to modify selected \
+        terrain.";
 
         let frame;
         let select_mode;
@@ -555,120 +621,51 @@ impl ScenePreview {
                                     .on_row(0)
                                     .on_column(0)
                                     .with_child({
-                                        select_mode = ButtonBuilder::new(
-                                            WidgetBuilder::new()
-                                                .with_margin(Thickness::uniform(1.0)),
-                                        )
-                                        .with_content(
-                                            ImageBuilder::new(
-                                                WidgetBuilder::new()
-                                                    .with_margin(Thickness::uniform(1.0))
-                                                    .with_width(32.0)
-                                                    .with_height(32.0),
-                                            )
-                                            .with_opt_texture(load_image(include_bytes!(
-                                                "../resources/embed/select.png"
-                                            )))
-                                            .build(ctx),
-                                        )
-                                        .build(ctx);
+                                        select_mode = make_interaction_mode_button(
+                                            ctx,
+                                            include_bytes!("../resources/embed/select.png"),
+                                            select_mode_tooltip,
+                                        );
                                         select_mode
                                     })
                                     .with_child({
-                                        move_mode = ButtonBuilder::new(
-                                            WidgetBuilder::new()
-                                                .with_margin(Thickness::uniform(1.0)),
-                                        )
-                                        .with_content(
-                                            ImageBuilder::new(
-                                                WidgetBuilder::new()
-                                                    .with_margin(Thickness::uniform(1.0))
-                                                    .with_width(32.0)
-                                                    .with_height(32.0),
-                                            )
-                                            .with_opt_texture(load_image(include_bytes!(
-                                                "../resources/embed/move_arrow.png"
-                                            )))
-                                            .build(ctx),
-                                        )
-                                        .build(ctx);
+                                        move_mode = make_interaction_mode_button(
+                                            ctx,
+                                            include_bytes!("../resources/embed/move_arrow.png"),
+                                            move_mode_tooltip,
+                                        );
                                         move_mode
                                     })
                                     .with_child({
-                                        rotate_mode = ButtonBuilder::new(
-                                            WidgetBuilder::new()
-                                                .with_margin(Thickness::uniform(1.0)),
-                                        )
-                                        .with_content(
-                                            ImageBuilder::new(
-                                                WidgetBuilder::new()
-                                                    .with_margin(Thickness::uniform(1.0))
-                                                    .with_width(32.0)
-                                                    .with_height(32.0),
-                                            )
-                                            .with_opt_texture(load_image(include_bytes!(
-                                                "../resources/embed/rotate_arrow.png"
-                                            )))
-                                            .build(ctx),
-                                        )
-                                        .build(ctx);
+                                        rotate_mode = make_interaction_mode_button(
+                                            ctx,
+                                            include_bytes!("../resources/embed/rotate_arrow.png"),
+                                            rotate_mode_tooltip,
+                                        );
                                         rotate_mode
                                     })
                                     .with_child({
-                                        scale_mode = ButtonBuilder::new(
-                                            WidgetBuilder::new()
-                                                .with_margin(Thickness::uniform(1.0)),
-                                        )
-                                        .with_content(
-                                            ImageBuilder::new(
-                                                WidgetBuilder::new()
-                                                    .with_width(32.0)
-                                                    .with_height(32.0),
-                                            )
-                                            .with_opt_texture(load_image(include_bytes!(
-                                                "../resources/embed/scale_arrow.png"
-                                            )))
-                                            .build(ctx),
-                                        )
-                                        .build(ctx);
+                                        scale_mode = make_interaction_mode_button(
+                                            ctx,
+                                            include_bytes!("../resources/embed/scale_arrow.png"),
+                                            scale_mode_tooltip,
+                                        );
                                         scale_mode
                                     })
                                     .with_child({
-                                        navmesh_mode = ButtonBuilder::new(
-                                            WidgetBuilder::new()
-                                                .with_margin(Thickness::uniform(1.0)),
-                                        )
-                                        .with_content(
-                                            ImageBuilder::new(
-                                                WidgetBuilder::new()
-                                                    .with_width(32.0)
-                                                    .with_height(32.0),
-                                            )
-                                            .with_opt_texture(load_image(include_bytes!(
-                                                "../resources/embed/navmesh.png"
-                                            )))
-                                            .build(ctx),
-                                        )
-                                        .build(ctx);
+                                        navmesh_mode = make_interaction_mode_button(
+                                            ctx,
+                                            include_bytes!("../resources/embed/navmesh.png"),
+                                            navmesh_mode_tooltip,
+                                        );
                                         navmesh_mode
                                     })
                                     .with_child({
-                                        terrain_mode = ButtonBuilder::new(
-                                            WidgetBuilder::new()
-                                                .with_margin(Thickness::uniform(1.0)),
-                                        )
-                                        .with_content(
-                                            ImageBuilder::new(
-                                                WidgetBuilder::new()
-                                                    .with_width(32.0)
-                                                    .with_height(32.0),
-                                            )
-                                            .with_opt_texture(load_image(include_bytes!(
-                                                "../resources/embed/terrain.png"
-                                            )))
-                                            .build(ctx),
-                                        )
-                                        .build(ctx);
+                                        terrain_mode = make_interaction_mode_button(
+                                            ctx,
+                                            include_bytes!("../resources/embed/terrain.png"),
+                                            terrain_mode_tooltip,
+                                        );
                                         terrain_mode
                                     }),
                             )
@@ -765,6 +762,7 @@ pub enum Message {
     OpenSettings(SettingsSectionKind),
     OpenMaterialEditor(Arc<Mutex<Material>>),
     ShowInAssetBrowser(PathBuf),
+    SetWorldViewerFilter(String),
 }
 
 impl Message {
@@ -798,12 +796,11 @@ pub fn make_save_file_selector(ctx: &mut BuildContext) -> Handle<UiNode> {
 }
 
 struct Editor {
-    sidebar: SideBar,
     scene: Option<EditorScene>,
     command_stack: CommandStack,
     message_sender: Sender<Message>,
     message_receiver: Receiver<Message>,
-    interaction_modes: Vec<InteractionMode>,
+    interaction_modes: Vec<Box<dyn InteractionMode>>,
     current_interaction_mode: Option<InteractionModeKind>,
     world_viewer: WorldViewer,
     root_grid: Handle<UiNode>,
@@ -823,6 +820,7 @@ struct Editor {
     model_import_dialog: ModelImportDialog,
     path_fixer: PathFixer,
     material_editor: MaterialEditor,
+    inspector: Inspector,
 }
 
 impl Editor {
@@ -882,12 +880,12 @@ impl Editor {
         let light_panel = LightPanel::new(engine);
 
         let ctx = &mut engine.user_interface.build_ctx();
-        let sidebar = SideBar::new(ctx, message_sender.clone());
         let navmesh_panel = NavmeshPanel::new(ctx, message_sender.clone());
         let world_outliner = WorldViewer::new(ctx, message_sender.clone());
         let command_stack_viewer = CommandStackViewer::new(ctx, message_sender.clone());
         let log = Log::new(ctx);
         let model_import_dialog = ModelImportDialog::new(ctx);
+        let inspector = Inspector::new(ctx, message_sender.clone());
 
         let root_grid = GridBuilder::new(
             WidgetBuilder::new()
@@ -920,7 +918,7 @@ impl Editor {
                                                                 .build(ctx),
                                                             TileBuilder::new(WidgetBuilder::new())
                                                                 .with_content(TileContent::Window(
-                                                                    sidebar.window,
+                                                                    inspector.window,
                                                                 ))
                                                                 .build(ctx),
                                                         ],
@@ -1011,7 +1009,6 @@ impl Editor {
 
         let mut editor = Self {
             navmesh_panel,
-            sidebar,
             preview,
             scene: None,
             command_stack: CommandStack::new(false),
@@ -1035,6 +1032,7 @@ impl Editor {
             model_import_dialog,
             path_fixer,
             material_editor,
+            inspector,
         };
 
         editor.set_interaction_mode(Some(InteractionModeKind::Move), engine);
@@ -1100,37 +1098,40 @@ impl Editor {
             clipboard: Default::default(),
         };
 
+        for mut interaction_mode in self.interaction_modes.drain(..) {
+            interaction_mode.on_drop(engine);
+        }
+
         self.interaction_modes = vec![
-            InteractionMode::Select(SelectInteractionMode::new(
+            Box::new(SelectInteractionMode::new(
                 self.preview.frame,
                 self.preview.selection_frame,
                 self.message_sender.clone(),
             )),
-            InteractionMode::Move(MoveInteractionMode::new(
+            Box::new(MoveInteractionMode::new(
                 &editor_scene,
                 engine,
                 self.message_sender.clone(),
             )),
-            InteractionMode::Scale(ScaleInteractionMode::new(
+            Box::new(ScaleInteractionMode::new(
                 &editor_scene,
                 engine,
                 self.message_sender.clone(),
             )),
-            InteractionMode::Rotate(RotateInteractionMode::new(
+            Box::new(RotateInteractionMode::new(
                 &editor_scene,
                 engine,
                 self.message_sender.clone(),
             )),
-            InteractionMode::Navmesh(EditNavmeshMode::new(
+            Box::new(EditNavmeshMode::new(
                 &editor_scene,
                 engine,
                 self.message_sender.clone(),
             )),
-            InteractionMode::Terrain(TerrainInteractionMode::new(
+            Box::new(TerrainInteractionMode::new(
                 &editor_scene,
                 engine,
                 self.message_sender.clone(),
-                self.sidebar.terrain_section.brush_section.brush.clone(),
             )),
         ];
 
@@ -1163,6 +1164,11 @@ impl Editor {
                 }
 
                 self.current_interaction_mode = mode;
+
+                // Activate new.
+                if let Some(current_mode) = self.current_interaction_mode {
+                    self.interaction_modes[current_mode as usize].activate(editor_scene, engine);
+                }
             }
         }
     }
@@ -1181,14 +1187,16 @@ impl Editor {
             MenuContext {
                 engine,
                 editor_scene: self.scene.as_mut(),
-                sidebar_window: self.sidebar.window,
-                world_outliner_window: self.world_viewer.window,
-                asset_window: self.asset_browser.window,
-                configurator_window: self.configurator.window,
-                light_panel: self.light_panel.window,
-                log_panel: self.log.window,
+                panels: Panels {
+                    inspector_window: self.inspector.window,
+                    world_outliner_window: self.world_viewer.window,
+                    asset_window: self.asset_browser.window,
+                    light_panel: self.light_panel.window,
+                    log_panel: self.log.window,
+                    configurator_window: self.configurator.window,
+                    path_fixer: self.path_fixer.window,
+                },
                 settings: &mut self.settings,
-                path_fixer: self.path_fixer.window,
             },
         );
 
@@ -1203,8 +1211,10 @@ impl Editor {
                 message,
                 editor_scene,
                 engine,
-                if let InteractionMode::Navmesh(edit_mode) =
-                    &mut self.interaction_modes[InteractionModeKind::Navmesh as usize]
+                if let Some(edit_mode) = self.interaction_modes
+                    [InteractionModeKind::Navmesh as usize]
+                    .as_any_mut()
+                    .downcast_mut()
                 {
                     edit_mode
                 } else {
@@ -1212,8 +1222,16 @@ impl Editor {
                 },
             );
 
-            self.sidebar
-                .handle_ui_message(message, editor_scene, engine);
+            self.inspector
+                .handle_ui_message(message, editor_scene, engine, &self.message_sender);
+
+            if let Some(current_im) = self.current_interaction_mode {
+                self.interaction_modes[current_im as usize].handle_ui_message(
+                    message,
+                    editor_scene,
+                    engine,
+                );
+            }
 
             self.world_viewer
                 .handle_ui_message(message, editor_scene, engine);
@@ -1581,9 +1599,9 @@ impl Editor {
             .sync_to_model(self.scene.as_ref(), &mut engine.user_interface);
 
         if let Some(editor_scene) = self.scene.as_mut() {
-            self.world_viewer.sync_to_model(editor_scene, engine);
-            self.sidebar.sync_to_model(editor_scene, engine);
+            self.inspector.sync_to_model(editor_scene, engine);
             self.navmesh_panel.sync_to_model(editor_scene, engine);
+            self.world_viewer.sync_to_model(editor_scene, engine);
             self.material_editor
                 .sync_to_model(&mut engine.user_interface);
             self.command_stack_viewer.sync_to_model(
@@ -1616,6 +1634,11 @@ impl Editor {
             self.log.handle_message(&message, engine);
             self.path_fixer
                 .handle_message(&message, &mut engine.user_interface);
+
+            if let Some(editor_scene) = self.scene.as_ref() {
+                self.inspector
+                    .handle_message(&message, editor_scene, engine);
+            }
 
             match message {
                 Message::DoSceneCommand(command) => {
@@ -1793,9 +1816,11 @@ impl Editor {
                     needs_sync = true;
                 }
                 Message::OpenSettings(section) => {
-                    self.menu
-                        .settings
-                        .open(&engine.user_interface, &self.settings, Some(section));
+                    self.menu.file_menu.settings.open(
+                        &engine.user_interface,
+                        &self.settings,
+                        Some(section),
+                    );
                 }
                 Message::OpenMaterialEditor(material) => {
                     self.material_editor.set_material(Some(material), engine);
@@ -1808,6 +1833,9 @@ impl Editor {
                 }
                 Message::ShowInAssetBrowser(path) => {
                     self.asset_browser.locate_path(&engine.user_interface, path);
+                }
+                Message::SetWorldViewerFilter(filter) => {
+                    self.world_viewer.set_filter(filter, &engine.user_interface);
                 }
             }
         }
