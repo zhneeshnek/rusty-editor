@@ -17,23 +17,24 @@ use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
 };
+use std::cell::Cell;
 
 pub struct CameraController {
     pub pivot: Handle<Node>,
     pub camera: Handle<Node>,
     yaw: f32,
     pitch: f32,
-    rotate: bool,
+    rotate: Cell<bool>,
     drag_side: f32,
     drag_up: f32,
-    drag: bool,
-    move_left: bool,
-    move_right: bool,
-    move_forward: bool,
-    move_backward: bool,
-    move_up: bool,
-    move_down: bool,
-    speed_factor: f32,
+    drag: Cell<bool>,
+    move_left: Cell<bool>,
+    move_right: Cell<bool>,
+    move_forward: Cell<bool>,
+    move_backward: Cell<bool>,
+    move_up: Cell<bool>,
+    move_down: Cell<bool>,
+    speed_factor: Cell<f32>,
     stack: Vec<Handle<Node>>,
     editor_context: PickContext,
     scene_context: PickContext,
@@ -79,17 +80,17 @@ impl CameraController {
             camera,
             yaw: 0.0,
             pitch: 0.0,
-            rotate: false,
+            rotate: Cell::new(false),
             drag_side: 0.0,
             drag_up: 0.0,
-            drag: false,
-            move_left: false,
-            move_right: false,
-            move_forward: false,
-            move_backward: false,
-            move_up: false,
-            move_down: false,
-            speed_factor: 1.0,
+            drag: Cell::new(false),
+            move_left: Cell::new(false),
+            move_right: Cell::new(false),
+            move_forward: Cell::new(false),
+            move_backward: Cell::new(false),
+            move_up: Cell::new(false),
+            move_down: Cell::new(false),
+            speed_factor: Cell::new(1.0),
             stack: Default::default(),
             editor_context: Default::default(),
             scene_context: Default::default(),
@@ -97,7 +98,7 @@ impl CameraController {
     }
 
     pub fn on_mouse_move(&mut self, delta: Vector2<f32>) {
-        if self.rotate {
+        if self.rotate.get() {
             self.yaw -= delta.x as f32 * 0.01;
             self.pitch += delta.y as f32 * 0.01;
             if self.pitch > 90.0f32.to_radians() {
@@ -108,13 +109,13 @@ impl CameraController {
             }
         }
 
-        if self.drag {
+        if self.drag.get() {
             self.drag_side -= delta.x * 0.01;
             self.drag_up -= delta.y * 0.01;
         }
     }
 
-    pub fn on_mouse_wheel(&mut self, delta: f32, graph: &mut Graph) {
+    pub fn on_mouse_wheel(&self, delta: f32, graph: &mut Graph) {
         let camera = &mut graph[self.camera];
 
         let look = camera.global_transform().look();
@@ -124,53 +125,53 @@ impl CameraController {
         }
     }
 
-    pub fn on_mouse_button_up(&mut self, button: MouseButton) {
+    pub fn on_mouse_button_up(&self, button: MouseButton) {
         match button {
             MouseButton::Right => {
-                self.rotate = false;
+                self.rotate.set(false);
             }
             MouseButton::Middle => {
-                self.drag = false;
+                self.drag.set(false);
             }
             _ => (),
         }
     }
 
-    pub fn on_mouse_button_down(&mut self, button: MouseButton) {
+    pub fn on_mouse_button_down(&self, button: MouseButton) {
         match button {
             MouseButton::Right => {
-                self.rotate = true;
+                self.rotate.set(true);
             }
             MouseButton::Middle => {
-                self.drag = true;
+                self.drag.set(true);
             }
             _ => (),
         }
     }
 
-    pub fn on_key_up(&mut self, key: KeyCode) {
+    pub fn on_key_up(&self, key: KeyCode) {
         match key {
-            KeyCode::W => self.move_forward = false,
-            KeyCode::S => self.move_backward = false,
-            KeyCode::A => self.move_left = false,
-            KeyCode::D => self.move_right = false,
-            KeyCode::Space | KeyCode::Q => self.move_up = false,
-            KeyCode::E => self.move_down = false,
-            KeyCode::LControl | KeyCode::LShift => self.speed_factor = 1.0,
+            KeyCode::W => self.move_forward.set(false),
+            KeyCode::S => self.move_backward.set(false),
+            KeyCode::A => self.move_left.set(false),
+            KeyCode::D => self.move_right.set(false),
+            KeyCode::Space | KeyCode::Q => self.move_up.set(false),
+            KeyCode::E => self.move_down.set(false),
+            KeyCode::LControl | KeyCode::LShift => self.speed_factor.set(1.0),
             _ => (),
         }
     }
 
-    pub fn on_key_down(&mut self, key: KeyCode) {
+    pub fn on_key_down(&self, key: KeyCode) {
         match key {
-            KeyCode::W => self.move_forward = true,
-            KeyCode::S => self.move_backward = true,
-            KeyCode::A => self.move_left = true,
-            KeyCode::D => self.move_right = true,
-            KeyCode::Space | KeyCode::Q => self.move_up = true,
-            KeyCode::E => self.move_down = true,
-            KeyCode::LControl => self.speed_factor = 2.0,
-            KeyCode::LShift => self.speed_factor = 0.25,
+            KeyCode::W => self.move_forward.set(true),
+            KeyCode::S => self.move_backward.set(true),
+            KeyCode::A => self.move_left.set(true),
+            KeyCode::D => self.move_right.set(true),
+            KeyCode::Space | KeyCode::Q => self.move_up.set(true),
+            KeyCode::E => self.move_down.set(true),
+            KeyCode::LControl => self.speed_factor.set(2.0),
+            KeyCode::LShift => self.speed_factor.set(0.25),
             _ => (),
         }
     }
@@ -184,26 +185,26 @@ impl CameraController {
         let up = global_transform.up();
 
         let mut move_vec = Vector3::default();
-        if self.move_forward {
+        if self.move_forward.get() {
             move_vec += look;
         }
-        if self.move_backward {
+        if self.move_backward.get() {
             move_vec -= look;
         }
-        if self.move_left {
+        if self.move_left.get() {
             move_vec += side;
         }
-        if self.move_right {
+        if self.move_right.get() {
             move_vec -= side;
         }
-        if self.move_up {
+        if self.move_up.get() {
             move_vec += up;
         }
-        if self.move_down {
+        if self.move_down.get() {
             move_vec -= up;
         }
         if let Some(v) = move_vec.try_normalize(std::f32::EPSILON) {
-            move_vec = v.scale(self.speed_factor * 10.0 * dt);
+            move_vec = v.scale(self.speed_factor.get() * 10.0 * dt);
         }
 
         move_vec += side * self.drag_side;
