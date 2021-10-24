@@ -31,6 +31,7 @@ pub mod sidebar;
 pub mod utils;
 pub mod world;
 
+use crate::menu::Panels;
 use crate::{
     asset::{AssetBrowser, AssetItem, AssetKind},
     camera::CameraController,
@@ -47,7 +48,7 @@ use crate::{
         scale_mode::ScaleInteractionMode,
         select_mode::SelectInteractionMode,
         terrain::TerrainInteractionMode,
-        InteractionMode, InteractionModeKind, InteractionModeTrait,
+        InteractionMode, InteractionModeKind,
     },
     light::LightPanel,
     log::Log,
@@ -765,6 +766,7 @@ pub enum Message {
     OpenSettings(SettingsSectionKind),
     OpenMaterialEditor(Arc<Mutex<Material>>),
     ShowInAssetBrowser(PathBuf),
+    SetWorldViewerFilter(String),
 }
 
 impl Message {
@@ -803,7 +805,7 @@ struct Editor {
     command_stack: CommandStack,
     message_sender: Sender<Message>,
     message_receiver: Receiver<Message>,
-    interaction_modes: Vec<InteractionMode>,
+    interaction_modes: Vec<Box<dyn InteractionMode>>,
     current_interaction_mode: Option<InteractionModeKind>,
     world_viewer: WorldViewer,
     root_grid: Handle<UiNode>,
@@ -1100,37 +1102,40 @@ impl Editor {
             clipboard: Default::default(),
         };
 
+        for mut interaction_mode in self.interaction_modes.drain(..) {
+            interaction_mode.on_drop(engine);
+        }
+
         self.interaction_modes = vec![
-            InteractionMode::Select(SelectInteractionMode::new(
+            Box::new(SelectInteractionMode::new(
                 self.preview.frame,
                 self.preview.selection_frame,
                 self.message_sender.clone(),
             )),
-            InteractionMode::Move(MoveInteractionMode::new(
+            Box::new(MoveInteractionMode::new(
                 &editor_scene,
                 engine,
                 self.message_sender.clone(),
             )),
-            InteractionMode::Scale(ScaleInteractionMode::new(
+            Box::new(ScaleInteractionMode::new(
                 &editor_scene,
                 engine,
                 self.message_sender.clone(),
             )),
-            InteractionMode::Rotate(RotateInteractionMode::new(
+            Box::new(RotateInteractionMode::new(
                 &editor_scene,
                 engine,
                 self.message_sender.clone(),
             )),
-            InteractionMode::Navmesh(EditNavmeshMode::new(
+            Box::new(EditNavmeshMode::new(
                 &editor_scene,
                 engine,
                 self.message_sender.clone(),
             )),
-            InteractionMode::Terrain(TerrainInteractionMode::new(
+            Box::new(TerrainInteractionMode::new(
                 &editor_scene,
                 engine,
                 self.message_sender.clone(),
-                self.sidebar.terrain_section.brush_section.brush.clone(),
             )),
         ];
 
@@ -1163,6 +1168,11 @@ impl Editor {
                 }
 
                 self.current_interaction_mode = mode;
+
+                // Activate new.
+                if let Some(current_mode) = self.current_interaction_mode {
+                    self.interaction_modes[current_mode as usize].activate(editor_scene, engine);
+                }
             }
         }
     }
@@ -1181,14 +1191,16 @@ impl Editor {
             MenuContext {
                 engine,
                 editor_scene: self.scene.as_mut(),
-                sidebar_window: self.sidebar.window,
-                world_outliner_window: self.world_viewer.window,
-                asset_window: self.asset_browser.window,
-                configurator_window: self.configurator.window,
-                light_panel: self.light_panel.window,
-                log_panel: self.log.window,
+                panels: Panels {
+                    sidebar_window: self.sidebar.window,
+                    world_outliner_window: self.world_viewer.window,
+                    asset_window: self.asset_browser.window,
+                    light_panel: self.light_panel.window,
+                    log_panel: self.log.window,
+                    configurator_window: self.configurator.window,
+                    path_fixer: self.path_fixer.window,
+                },
                 settings: &mut self.settings,
-                path_fixer: self.path_fixer.window,
             },
         );
 
@@ -1203,14 +1215,24 @@ impl Editor {
                 message,
                 editor_scene,
                 engine,
-                if let InteractionMode::Navmesh(edit_mode) =
-                    &mut self.interaction_modes[InteractionModeKind::Navmesh as usize]
+                if let Some(edit_mode) = self.interaction_modes
+                    [InteractionModeKind::Navmesh as usize]
+                    .as_any_mut()
+                    .downcast_mut()
                 {
                     edit_mode
                 } else {
                     unreachable!()
                 },
             );
+
+            if let Some(current_im) = self.current_interaction_mode {
+                self.interaction_modes[current_im as usize].handle_ui_message(
+                    message,
+                    editor_scene,
+                    engine,
+                );
+            }
 
             self.sidebar
                 .handle_ui_message(message, editor_scene, engine);
@@ -1793,9 +1815,11 @@ impl Editor {
                     needs_sync = true;
                 }
                 Message::OpenSettings(section) => {
-                    self.menu
-                        .settings
-                        .open(&engine.user_interface, &self.settings, Some(section));
+                    self.menu.file_menu.settings.open(
+                        &engine.user_interface,
+                        &self.settings,
+                        Some(section),
+                    );
                 }
                 Message::OpenMaterialEditor(material) => {
                     self.material_editor.set_material(Some(material), engine);
@@ -1808,6 +1832,9 @@ impl Editor {
                 }
                 Message::ShowInAssetBrowser(path) => {
                     self.asset_browser.locate_path(&engine.user_interface, path);
+                }
+                Message::SetWorldViewerFilter(filter) => {
+                    self.world_viewer.set_filter(filter, &engine.user_interface);
                 }
             }
         }

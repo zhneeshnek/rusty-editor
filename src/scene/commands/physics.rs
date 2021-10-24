@@ -4,6 +4,7 @@ use crate::{
     scene::commands::SceneContext,
     Physics,
 };
+use rg3d::scene::graph::Graph;
 use rg3d::{
     core::{
         algebra::{UnitQuaternion, Vector3},
@@ -250,6 +251,64 @@ impl Command for SetBodyCommand {
                 .physics
                 .binder
                 .remove_by_key(&self.node);
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct CreateRigidBodyCommand {
+    ticket: Option<Ticket<RigidBody>>,
+    handle: Handle<RigidBody>,
+    body: Option<RigidBody>,
+}
+
+impl CreateRigidBodyCommand {
+    pub fn new(body: RigidBody) -> Self {
+        Self {
+            ticket: None,
+            handle: Default::default(),
+            body: Some(body),
+        }
+    }
+}
+
+impl Command for CreateRigidBodyCommand {
+    fn name(&mut self, _context: &SceneContext) -> String {
+        "Create Rigid Body".to_owned()
+    }
+
+    fn execute(&mut self, context: &mut SceneContext) {
+        match self.ticket.take() {
+            None => {
+                self.handle = context
+                    .editor_scene
+                    .physics
+                    .bodies
+                    .spawn(self.body.take().unwrap());
+            }
+            Some(ticket) => {
+                context
+                    .editor_scene
+                    .physics
+                    .bodies
+                    .put_back(ticket, self.body.take().unwrap());
+            }
+        }
+    }
+
+    fn revert(&mut self, context: &mut SceneContext) {
+        let (ticket, node) = context
+            .editor_scene
+            .physics
+            .bodies
+            .take_reserve(self.handle);
+        self.ticket = Some(ticket);
+        self.body = Some(node);
+    }
+
+    fn finalize(&mut self, context: &mut SceneContext) {
+        if let Some(ticket) = self.ticket.take() {
+            context.editor_scene.physics.bodies.forget_ticket(ticket);
         }
     }
 }
@@ -659,3 +718,69 @@ define_joint_variant_command!(SetPrismaticJointAxis2Command("Set Prismatic Joint
 define_joint_command!(SetJointConnectedBodyCommand("Set Joint Connected Body", ErasedHandle) where fn swap(self, physics, joint) {
     std::mem::swap(&mut joint.body2, &mut self.value);
 });
+
+define_joint_command!(SetJointBody1Command("Set Joint Body 1", ErasedHandle) where fn swap(self, physics, joint) {
+    std::mem::swap(&mut joint.body1, &mut self.value);
+});
+
+define_joint_command!(SetJointBody2Command("Set Joint Body 2", ErasedHandle) where fn swap(self, physics, joint) {
+    std::mem::swap(&mut joint.body2, &mut self.value);
+});
+
+#[derive(Debug)]
+pub struct MoveRigidBodyCommand {
+    rigid_body: Handle<RigidBody>,
+    old_position: Vector3<f32>,
+    new_position: Vector3<f32>,
+}
+
+impl MoveRigidBodyCommand {
+    pub fn new(
+        rigid_body: Handle<RigidBody>,
+        old_position: Vector3<f32>,
+        new_position: Vector3<f32>,
+    ) -> Self {
+        Self {
+            rigid_body,
+            old_position,
+            new_position,
+        }
+    }
+
+    fn swap(&mut self) -> Vector3<f32> {
+        let position = self.new_position;
+        std::mem::swap(&mut self.new_position, &mut self.old_position);
+        position
+    }
+
+    fn set_position(&self, graph: &mut Graph, physics: &mut Physics, position: Vector3<f32>) {
+        physics.bodies[self.rigid_body].position = position;
+        if let Some(&node) = physics.binder.key_of(&self.rigid_body) {
+            graph[node].local_transform_mut().set_position(position);
+        }
+    }
+}
+
+impl Command for MoveRigidBodyCommand {
+    fn name(&mut self, _context: &SceneContext) -> String {
+        "Move Rigid Body".to_owned()
+    }
+
+    fn execute(&mut self, context: &mut SceneContext) {
+        let position = self.swap();
+        self.set_position(
+            &mut context.scene.graph,
+            &mut context.editor_scene.physics,
+            position,
+        );
+    }
+
+    fn revert(&mut self, context: &mut SceneContext) {
+        let position = self.swap();
+        self.set_position(
+            &mut context.scene.graph,
+            &mut context.editor_scene.physics,
+            position,
+        );
+    }
+}

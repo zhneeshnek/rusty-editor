@@ -2,13 +2,10 @@ use rg3d::{
     core::{algebra::Vector2, pool::Handle},
     gui::{
         brush::Brush,
-        core::color::Color,
         draw::{DrawingContext, SharedTexture},
         grid::{Column, GridBuilder, Row},
         image::ImageBuilder,
-        message::{
-            DecoratorMessage, MessageDirection, OsEvent, TextMessage, UiMessage, UiMessageData,
-        },
+        message::{MessageDirection, OsEvent, TextMessage, UiMessage, UiMessageData},
         text::TextBuilder,
         tree::{Tree, TreeBuilder},
         widget::Widget,
@@ -20,13 +17,12 @@ use rg3d::{
 use std::{
     fmt::{Debug, Formatter},
     ops::{Deref, DerefMut},
+    sync::mpsc::Sender,
 };
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SceneItemMessage {
     Name(String),
-    /// Odd or even.
-    Order(bool),
 }
 
 impl SceneItemMessage {
@@ -42,7 +38,14 @@ impl SceneItemMessage {
 pub struct SceneItem<T> {
     pub tree: Tree,
     text_name: Handle<UiNode>,
+    name_value: String,
     pub entity_handle: Handle<T>,
+}
+
+impl<T> SceneItem<T> {
+    pub fn name(&self) -> &str {
+        &self.name_value
+    }
 }
 
 impl<T> Clone for SceneItem<T> {
@@ -50,6 +53,7 @@ impl<T> Clone for SceneItem<T> {
         Self {
             tree: self.tree.clone(),
             text_name: self.text_name,
+            name_value: self.name_value.clone(),
             entity_handle: self.entity_handle,
         }
     }
@@ -93,50 +97,32 @@ impl<T: 'static> Control for SceneItem<T> {
         self.tree.draw(drawing_context);
     }
 
-    fn update(&mut self, dt: f32) {
-        self.tree.update(dt);
+    fn update(&mut self, dt: f32, sender: &Sender<UiMessage>) {
+        self.tree.update(dt, sender);
     }
 
     fn handle_routed_message(&mut self, ui: &mut UserInterface, message: &mut UiMessage) {
         self.tree.handle_routed_message(ui, message);
 
-        match message.data() {
-            UiMessageData::User(msg) => {
-                if let Some(msg) = msg.cast::<SceneItemMessage>() {
-                    match msg {
-                        &SceneItemMessage::Order(order) => {
-                            if message.destination() == self.handle() {
-                                ui.send_message(DecoratorMessage::normal_brush(
-                                    self.tree.back(),
-                                    MessageDirection::ToWidget,
-                                    Brush::Solid(if order {
-                                        Color::opaque(50, 50, 50)
-                                    } else {
-                                        Color::opaque(60, 60, 60)
-                                    }),
-                                ));
-                            }
-                        }
-                        SceneItemMessage::Name(name) => {
-                            if message.destination() == self.handle() {
-                                let name = format!(
-                                    "{} ({}:{})",
-                                    name,
-                                    self.entity_handle.index(),
-                                    self.entity_handle.generation()
-                                );
+        if let UiMessageData::User(msg) = message.data() {
+            if let Some(msg) = msg.cast::<SceneItemMessage>() {
+                if let SceneItemMessage::Name(name) = msg {
+                    if message.destination() == self.handle() {
+                        self.name_value = format!(
+                            "{} ({}:{})",
+                            name,
+                            self.entity_handle.index(),
+                            self.entity_handle.generation()
+                        );
 
-                                ui.send_message(TextMessage::text(
-                                    self.text_name,
-                                    MessageDirection::ToWidget,
-                                    name,
-                                ));
-                            }
-                        }
+                        ui.send_message(TextMessage::text(
+                            self.text_name,
+                            MessageDirection::ToWidget,
+                            self.name_value.clone(),
+                        ));
                     }
                 }
             }
-            _ => {}
         }
     }
 
@@ -243,6 +229,7 @@ impl<T: 'static> SceneItemBuilder<T> {
         let item = SceneItem {
             tree,
             entity_handle: self.entity_handle,
+            name_value: self.name,
             text_name,
         };
 
