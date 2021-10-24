@@ -4,12 +4,13 @@ use crate::{
     scene::commands::SceneContext,
     Physics,
 };
+use rg3d::scene::graph::Graph;
 use rg3d::{
     core::{
         algebra::{UnitQuaternion, Vector3},
         pool::{ErasedHandle, Handle, Ticket},
     },
-    physics3d::desc::{ColliderShapeDesc, JointParamsDesc},
+    physics3d::desc::{ColliderShapeDesc, JointParamsDesc, RigidBodyTypeDesc},
     scene::node::Node,
 };
 
@@ -250,6 +251,64 @@ impl Command for SetBodyCommand {
                 .physics
                 .binder
                 .remove_by_key(&self.node);
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct CreateRigidBodyCommand {
+    ticket: Option<Ticket<RigidBody>>,
+    handle: Handle<RigidBody>,
+    body: Option<RigidBody>,
+}
+
+impl CreateRigidBodyCommand {
+    pub fn new(body: RigidBody) -> Self {
+        Self {
+            ticket: None,
+            handle: Default::default(),
+            body: Some(body),
+        }
+    }
+}
+
+impl Command for CreateRigidBodyCommand {
+    fn name(&mut self, _context: &SceneContext) -> String {
+        "Create Rigid Body".to_owned()
+    }
+
+    fn execute(&mut self, context: &mut SceneContext) {
+        match self.ticket.take() {
+            None => {
+                self.handle = context
+                    .editor_scene
+                    .physics
+                    .bodies
+                    .spawn(self.body.take().unwrap());
+            }
+            Some(ticket) => {
+                context
+                    .editor_scene
+                    .physics
+                    .bodies
+                    .put_back(ticket, self.body.take().unwrap());
+            }
+        }
+    }
+
+    fn revert(&mut self, context: &mut SceneContext) {
+        let (ticket, node) = context
+            .editor_scene
+            .physics
+            .bodies
+            .take_reserve(self.handle);
+        self.ticket = Some(ticket);
+        self.body = Some(node);
+    }
+
+    fn finalize(&mut self, context: &mut SceneContext) {
+        if let Some(ticket) = self.ticket.take() {
+            context.editor_scene.physics.bodies.forget_ticket(ticket);
         }
     }
 }
@@ -536,6 +595,42 @@ define_body_command!(SetBodyMassCommand("Set Body Mass", f32) where fn swap(self
     std::mem::swap(&mut body.mass, &mut self.value);
 });
 
+define_body_command!(SetBodyPositionCommand("Set Body Position", Vector3<f32>) where fn swap(self, physics, body) {
+    std::mem::swap(&mut body.position, &mut self.value);
+});
+
+define_body_command!(SetBodyRotationCommand("Set Body Rotation", UnitQuaternion<f32>) where fn swap(self, physics, body) {
+    std::mem::swap(&mut body.rotation, &mut self.value);
+});
+
+define_body_command!(SetBodyLinVelCommand("Set Body Linear Velocity", Vector3<f32>) where fn swap(self, physics, body) {
+    std::mem::swap(&mut body.lin_vel, &mut self.value);
+});
+
+define_body_command!(SetBodyAngVelCommand("Set Body Angular Velocity", Vector3<f32>) where fn swap(self, physics, body) {
+    std::mem::swap(&mut body.ang_vel, &mut self.value);
+});
+
+define_body_command!(SetBodyStatusCommand("Set Body Status", RigidBodyTypeDesc) where fn swap(self, physics, body) {
+    std::mem::swap(&mut body.status, &mut self.value);
+});
+
+define_body_command!(SetBodyXRotationLockedCommand("Set Body X Rotation Locked", bool) where fn swap(self, physics, body) {
+    std::mem::swap(&mut body.x_rotation_locked, &mut self.value);
+});
+
+define_body_command!(SetBodyYRotationLockedCommand("Set Body Y Rotation Locked", bool) where fn swap(self, physics, body) {
+    std::mem::swap(&mut body.y_rotation_locked, &mut self.value);
+});
+
+define_body_command!(SetBodyZRotationLockedCommand("Set Body Z Rotation Locked", bool) where fn swap(self, physics, body) {
+    std::mem::swap(&mut body.z_rotation_locked, &mut self.value);
+});
+
+define_body_command!(SetBodyTranslationLockedCommand("Set Body Translation Locked", bool) where fn swap(self, physics, body) {
+    std::mem::swap(&mut body.translation_locked, &mut self.value);
+});
+
 define_collider_command!(SetColliderFrictionCommand("Set Collider Friction", f32) where fn swap(self, physics, collider) {
     std::mem::swap(&mut collider.friction, &mut self.value);
 });
@@ -556,6 +651,10 @@ define_collider_command!(SetColliderIsSensorCommand("Set Collider Is Sensor", bo
     std::mem::swap(&mut collider.is_sensor, &mut self.value);
 });
 
+define_collider_command!(SetColliderDensityCommand("Set Collider Density", Option<f32>) where fn swap(self, physics, collider) {
+    std::mem::swap(&mut collider.density, &mut self.value);
+});
+
 define_collider_command!(SetColliderCollisionGroupsMembershipsCommand("Set Collider Collision Groups Memberships", u32) where fn swap(self, physics, collider) {
     std::mem::swap(&mut collider.collision_groups.memberships, &mut self.value);
 });
@@ -564,12 +663,32 @@ define_collider_command!(SetColliderCollisionGroupsFilterCommand("Set Collider C
     std::mem::swap(&mut collider.collision_groups.filter, &mut self.value);
 });
 
+define_collider_command!(SetColliderSolverGroupsMembershipsCommand("Set Collider Solver Groups Memberships", u32) where fn swap(self, physics, collider) {
+    std::mem::swap(&mut collider.solver_groups.memberships, &mut self.value);
+});
+
+define_collider_command!(SetColliderSolverGroupsFilterCommand("Set Collider Solver Groups Filter", u32) where fn swap(self, physics, collider) {
+    std::mem::swap(&mut collider.solver_groups.filter, &mut self.value);
+});
+
 define_collider_variant_command!(SetCylinderHalfHeightCommand("Set Cylinder Half Height", f32) where fn swap(self, physics, Cylinder, cylinder) {
     std::mem::swap(&mut cylinder.half_height, &mut self.value);
 });
 
 define_collider_variant_command!(SetCylinderRadiusCommand("Set Cylinder Radius", f32) where fn swap(self, physics, Cylinder, cylinder) {
     std::mem::swap(&mut cylinder.radius, &mut self.value);
+});
+
+define_collider_variant_command!(SetRoundCylinderHalfHeightCommand("Set Cylinder Half Height", f32) where fn swap(self, physics, RoundCylinder, round_cylinder) {
+    std::mem::swap(&mut round_cylinder.half_height, &mut self.value);
+});
+
+define_collider_variant_command!(SetRoundCylinderRadiusCommand("Set Round Cylinder Radius", f32) where fn swap(self, physics, RoundCylinder, round_cylinder) {
+    std::mem::swap(&mut round_cylinder.radius, &mut self.value);
+});
+
+define_collider_variant_command!(SetRoundCylinderBorderRadiusCommand("Set Round Cylinder Border Radius", f32) where fn swap(self, physics, RoundCylinder, round_cylinder) {
+    std::mem::swap(&mut round_cylinder.border_radius, &mut self.value);
 });
 
 define_collider_variant_command!(SetConeHalfHeightCommand("Set Cone Half Height", f32) where fn swap(self, physics, Cone, cone) {
@@ -594,6 +713,26 @@ define_collider_variant_command!(SetCapsuleBeginCommand("Set Capsule Begin", Vec
 
 define_collider_variant_command!(SetCapsuleEndCommand("Set Capsule End", Vector3<f32>) where fn swap(self, physics, Capsule, capsule) {
     std::mem::swap(&mut capsule.end, &mut self.value);
+});
+
+define_collider_variant_command!(SetSegmentBeginCommand("Set Segment Begin", Vector3<f32>) where fn swap(self, physics, Segment, segment) {
+    std::mem::swap(&mut segment.begin, &mut self.value);
+});
+
+define_collider_variant_command!(SetSegmentEndCommand("Set Segment End", Vector3<f32>) where fn swap(self, physics, Segment, segment) {
+    std::mem::swap(&mut segment.end, &mut self.value);
+});
+
+define_collider_variant_command!(SetTriangleACommand("Set Triangle A", Vector3<f32>) where fn swap(self, physics, Triangle, triangle) {
+    std::mem::swap(&mut triangle.a, &mut self.value);
+});
+
+define_collider_variant_command!(SetTriangleBCommand("Set Triangle B", Vector3<f32>) where fn swap(self, physics, Triangle, triangle) {
+    std::mem::swap(&mut triangle.b, &mut self.value);
+});
+
+define_collider_variant_command!(SetTriangleCCommand("Set Triangle C", Vector3<f32>) where fn swap(self, physics, Triangle, triangle) {
+    std::mem::swap(&mut triangle.c, &mut self.value);
 });
 
 define_collider_variant_command!(SetBallRadiusCommand("Set Ball Radius", f32) where fn swap(self, physics, Ball, ball) {
@@ -656,6 +795,68 @@ define_joint_variant_command!(SetPrismaticJointAxis2Command("Set Prismatic Joint
     std::mem::swap(&mut prismatic.local_axis2, &mut self.value);
 });
 
-define_joint_command!(SetJointConnectedBodyCommand("Set Joint Connected Body", ErasedHandle) where fn swap(self, physics, joint) {
+define_joint_command!(SetJointBody1Command("Set Joint Body 1", ErasedHandle) where fn swap(self, physics, joint) {
+    std::mem::swap(&mut joint.body1, &mut self.value);
+});
+
+define_joint_command!(SetJointBody2Command("Set Joint Body 2", ErasedHandle) where fn swap(self, physics, joint) {
     std::mem::swap(&mut joint.body2, &mut self.value);
 });
+
+#[derive(Debug)]
+pub struct MoveRigidBodyCommand {
+    rigid_body: Handle<RigidBody>,
+    old_position: Vector3<f32>,
+    new_position: Vector3<f32>,
+}
+
+impl MoveRigidBodyCommand {
+    pub fn new(
+        rigid_body: Handle<RigidBody>,
+        old_position: Vector3<f32>,
+        new_position: Vector3<f32>,
+    ) -> Self {
+        Self {
+            rigid_body,
+            old_position,
+            new_position,
+        }
+    }
+
+    fn swap(&mut self) -> Vector3<f32> {
+        let position = self.new_position;
+        std::mem::swap(&mut self.new_position, &mut self.old_position);
+        position
+    }
+
+    fn set_position(&self, graph: &mut Graph, physics: &mut Physics, position: Vector3<f32>) {
+        physics.bodies[self.rigid_body].position = position;
+        if let Some(&node) = physics.binder.key_of(&self.rigid_body) {
+            graph[node].local_transform_mut().set_position(position);
+        }
+    }
+}
+
+impl Command for MoveRigidBodyCommand {
+    fn name(&mut self, _context: &SceneContext) -> String {
+        "Move Rigid Body".to_owned()
+    }
+
+    fn execute(&mut self, context: &mut SceneContext) {
+        let position = self.swap();
+        self.set_position(
+            &mut context.scene.graph,
+            &mut context.editor_scene.physics,
+            position,
+        );
+    }
+
+    fn revert(&mut self, context: &mut SceneContext) {
+        let position = self.swap();
+        self.set_position(
+            &mut context.scene.graph,
+            &mut context.editor_scene.physics,
+            position,
+        );
+    }
+}
